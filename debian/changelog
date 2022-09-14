@@ -1,3 +1,9 @@
+python-opentelemetry-sdk (1.12.0-0pexip1) pexip-bullseye; urgency=medium
+
+  * New upstream release.
+
+ -- Mark Hymers <mark.hymers@pexip.com>  Wed, 14 Sep 2022 16:31:33 +0100
+
 python-opentelemetry-sdk (1.11.1-0pexip2) pexip-bullseye; urgency=medium
 
   * Bullseye rebuild for ARM64 inclusion
