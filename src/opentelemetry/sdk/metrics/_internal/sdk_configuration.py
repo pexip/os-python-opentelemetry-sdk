@@ -12,4 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-__version__ = "1.12.0"
+# pylint: disable=unused-import
+
+from dataclasses import dataclass
+from typing import Sequence
+
+# This kind of import is needed to avoid Sphinx errors.
+import opentelemetry.sdk.metrics
+import opentelemetry.sdk.resources
+
+
+@dataclass
+class SdkConfiguration:
+    resource: "opentelemetry.sdk.resources.Resource"
+    metric_readers: Sequence["opentelemetry.sdk.metrics.MetricReader"]
+    views: Sequence["opentelemetry.sdk.metrics.View"]

@@ -11,10 +11,10 @@ sdk_log_emitter_provider = opentelemetry.sdk._logs:LogEmitterProvider
 console = opentelemetry.sdk._logs.export:ConsoleLogExporter
 
 [opentelemetry_meter_provider]
-sdk_meter_provider = opentelemetry.sdk._metrics:MeterProvider
+sdk_meter_provider = opentelemetry.sdk.metrics:MeterProvider
 
 [opentelemetry_metrics_exporter]
-console = opentelemetry.sdk._metrics.export:ConsoleMetricExporter
+console = opentelemetry.sdk.metrics.export:ConsoleMetricExporter
 
 [opentelemetry_tracer_provider]
 sdk_tracer_provider = opentelemetry.sdk.trace:TracerProvider

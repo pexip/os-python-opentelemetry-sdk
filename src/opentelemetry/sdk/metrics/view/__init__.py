@@ -12,4 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-__version__ = "1.12.0"
+# pylint: disable=unused-import
+
+from opentelemetry.sdk.metrics._internal.aggregation import (  # noqa: F401
+    Aggregation,
+    DefaultAggregation,
+    DropAggregation,
+    ExplicitBucketHistogramAggregation,
+    LastValueAggregation,
+    SumAggregation,
+)
+from opentelemetry.sdk.metrics._internal.view import View  # noqa: F401
+
+__all__ = []
+for key, value in globals().copy().items():
+    if not key.startswith("_"):
+        value.__module__ = __name__
+        __all__.append(key)

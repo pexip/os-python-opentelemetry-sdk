@@ -406,3 +406,39 @@ The :envvar:`OTEL_PYTHON_LOG_EMITTER_PROVIDER` environment variable allows users
 provide the entry point for loading the log emitter provider. If not specified, SDK
 LogEmitterProvider is used.
 """
+
+_OTEL_PYTHON_LOGGING_AUTO_INSTRUMENTATION_ENABLED = (
+    "OTEL_PYTHON_LOGGING_AUTO_INSTRUMENTATION_ENABLED"
+)
+"""
+.. envvar:: OTEL_PYTHON_LOGGING_AUTO_INSTRUMENTATION_ENABLED
+
+The :envvar:`OTEL_PYTHON_LOGGING_AUTO_INSTRUMENTATION_ENABLED` environment variable allows users to
+enable/disabe the logging SDK auto instrumentation.
+Default: False
+
+Note: Logs SDK and its related settings are experimental.
+"""
+
+
+OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE = (
+    "OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE"
+)
+"""
+.. envvar:: OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE
+
+The :envvar:`OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE` environment
+variable allows users to set the default aggregation temporality policy to use
+on the basis of instrument kind. The valid (case-insensitive) values are:
+
+``CUMULATIVE``: Choose ``CUMULATIVE`` aggregation temporality for all instrument kinds.
+``DELTA``: Choose ``DELTA`` aggregation temporality for ``Counter``, ``Asynchronous Counter`` and ``Histogram``.
+Choose ``CUMULATIVE`` aggregation temporality for ``UpDownCounter`` and ``Asynchronous UpDownCounter``.
+"""
+
+OTEL_EXPORTER_JAEGER_GRPC_INSECURE = "OTEL_EXPORTER_JAEGER_GRPC_INSECURE"
+"""
+.. envvar:: OTEL_EXPORTER_JAEGER_GRPC_INSECURE
+
+The :envvar:`OTEL_EXPORTER_JAEGER_GRPC_INSECURE` is a boolean flag to True if collector has no encryption or authentication.
+"""

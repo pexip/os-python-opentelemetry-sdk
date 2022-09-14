@@ -59,6 +59,7 @@ import abc
 import concurrent.futures
 import logging
 import os
+import sys
 import typing
 from json import dumps
 
@@ -70,8 +71,9 @@ from opentelemetry.sdk.environment_variables import (
     OTEL_SERVICE_NAME,
 )
 from opentelemetry.semconv.resource import ResourceAttributes
+from opentelemetry.util.types import AttributeValue
 
-LabelValue = typing.Union[str, bool, int, float]
+LabelValue = AttributeValue
 Attributes = typing.Dict[str, LabelValue]
 logger = logging.getLogger(__name__)
 
@@ -241,6 +243,15 @@ class Resource:
             f"{dumps(self._attributes.copy(), sort_keys=True)}|{self._schema_url}"
         )
 
+    def to_json(self, indent=4) -> str:
+        return dumps(
+            {
+                "attributes": dict(self._attributes),
+                "schema_url": self._schema_url,
+            },
+            indent=indent,
+        )
+
 
 _EMPTY_RESOURCE = Resource({})
 _DEFAULT_RESOURCE = Resource(
@@ -284,6 +295,28 @@ class OTELResourceDetector(ResourceDetector):
         if service_name:
             env_resource_map[SERVICE_NAME] = service_name
         return Resource(env_resource_map)
+
+
+class ProcessResourceDetector(ResourceDetector):
+    # pylint: disable=no-self-use
+    def detect(self) -> "Resource":
+        _runtime_version = ".".join(
+            map(
+                str,
+                sys.version_info[:3]
+                if sys.version_info.releaselevel == "final"
+                and not sys.version_info.serial
+                else sys.version_info,
+            )
+        )
+
+        return Resource(
+            {
+                PROCESS_RUNTIME_DESCRIPTION: sys.version,
+                PROCESS_RUNTIME_NAME: sys.implementation.name,
+                PROCESS_RUNTIME_VERSION: _runtime_version,
+            }
+        )
 
 
 def get_aggregated_resources(
