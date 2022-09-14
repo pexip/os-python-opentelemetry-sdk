@@ -321,7 +321,7 @@ class LoggingHandler(logging.Handler):
         attributes = {
             k: v for k, v in vars(record).items() if k not in _RESERVED_ATTRS
         }
-        if record.exc_info is not None:
+        if record.exc_info:
             exc_type = ""
             message = ""
             stack_trace = ""
@@ -427,13 +427,13 @@ class LogEmitterProvider:
     def get_log_emitter(
         self,
         instrumenting_module_name: str,
-        instrumenting_module_verison: str = "",
+        instrumenting_module_version: str = "",
     ) -> LogEmitter:
         return LogEmitter(
             self._resource,
             self._multi_log_processor,
             InstrumentationScope(
-                instrumenting_module_name, instrumenting_module_verison
+                instrumenting_module_name, instrumenting_module_version
             ),
         )
 

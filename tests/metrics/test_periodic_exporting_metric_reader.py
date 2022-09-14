@@ -13,61 +13,91 @@
 # limitations under the License.
 
 import time
+from typing import Sequence
 from unittest.mock import Mock
 
 from flaky import flaky
 
-from opentelemetry.sdk._metrics.export import (
+from opentelemetry.sdk.metrics import Counter
+from opentelemetry.sdk.metrics._internal import _Counter
+from opentelemetry.sdk.metrics.export import (
+    AggregationTemporality,
+    Gauge,
+    Metric,
     MetricExporter,
+    MetricExportResult,
+    NumberDataPoint,
     PeriodicExportingMetricReader,
+    Sum,
 )
-from opentelemetry.sdk._metrics.point import Gauge, Metric, Sum
-from opentelemetry.sdk.resources import Resource
+from opentelemetry.sdk.metrics.view import (
+    DefaultAggregation,
+    LastValueAggregation,
+)
 from opentelemetry.test.concurrency_test import ConcurrencyTestBase
 from opentelemetry.util._time import _time_ns
 
 
 class FakeMetricsExporter(MetricExporter):
-    def __init__(self, wait=0):
+    def __init__(
+        self, wait=0, preferred_temporality=None, preferred_aggregation=None
+    ):
         self.wait = wait
         self.metrics = []
         self._shutdown = False
+        super().__init__(
+            preferred_temporality=preferred_temporality,
+            preferred_aggregation=preferred_aggregation,
+        )
 
-    def export(self, metrics):
+    def export(
+        self,
+        metrics: Sequence[Metric],
+        timeout_millis: float = 10_000,
+        **kwargs,
+    ) -> MetricExportResult:
         time.sleep(self.wait)
         self.metrics.extend(metrics)
         return True
 
-    def shutdown(self):
+    def shutdown(self, timeout_millis: float = 30_000, **kwargs) -> None:
         self._shutdown = True
+
+    def force_flush(self, timeout_millis: float = 10_000) -> bool:
+        return True
 
 
 metrics_list = [
     Metric(
         name="sum_name",
-        attributes={},
         description="",
-        instrumentation_scope=None,
-        resource=Resource.create(),
         unit="",
-        point=Sum(
-            start_time_unix_nano=_time_ns(),
-            time_unix_nano=_time_ns(),
-            value=2,
+        data=Sum(
+            data_points=[
+                NumberDataPoint(
+                    attributes={},
+                    start_time_unix_nano=_time_ns(),
+                    time_unix_nano=_time_ns(),
+                    value=2,
+                )
+            ],
             aggregation_temporality=1,
             is_monotonic=True,
         ),
     ),
     Metric(
         name="gauge_name",
-        attributes={},
         description="",
-        instrumentation_scope=None,
-        resource=Resource.create(),
         unit="",
-        point=Gauge(
-            time_unix_nano=_time_ns(),
-            value=2,
+        data=Gauge(
+            data_points=[
+                NumberDataPoint(
+                    attributes={},
+                    start_time_unix_nano=_time_ns(),
+                    time_unix_nano=_time_ns(),
+                    value=2,
+                )
+            ]
         ),
     ),
 ]
@@ -84,18 +114,22 @@ class TestPeriodicExportingMetricReader(ConcurrencyTestBase):
         self, metrics, exporter, collect_wait=0, interval=60000
     ):
 
-        pmr = PeriodicExportingMetricReader(exporter, interval)
+        pmr = PeriodicExportingMetricReader(
+            exporter, export_interval_millis=interval
+        )
 
-        def _collect(reader, temp):
+        def _collect(reader, timeout_millis):
             time.sleep(collect_wait)
-            pmr._receive_metrics(metrics)
+            pmr._receive_metrics(metrics, timeout_millis)
 
         pmr._set_collect_callback(_collect)
         return pmr
 
     def test_ticker_called(self):
         collect_mock = Mock()
-        pmr = PeriodicExportingMetricReader(Mock(), 1)
+        exporter = FakeMetricsExporter()
+        exporter.export = Mock()
+        pmr = PeriodicExportingMetricReader(exporter, export_interval_millis=1)
         pmr._set_collect_callback(collect_mock)
         time.sleep(0.1)
         self.assertTrue(collect_mock.assert_called_once)
@@ -122,8 +156,34 @@ class TestPeriodicExportingMetricReader(ConcurrencyTestBase):
         self.assertTrue(exporter._shutdown)
 
     def test_shutdown_multiple_times(self):
-        pmr = self._create_periodic_reader([], Mock())
+        pmr = self._create_periodic_reader([], FakeMetricsExporter())
         with self.assertLogs(level="WARNING") as w:
             self.run_with_many_threads(pmr.shutdown)
             self.assertTrue("Can't shutdown multiple times", w.output[0])
         pmr.shutdown()
+
+    def test_exporter_temporality_preference(self):
+        exporter = FakeMetricsExporter(
+            preferred_temporality={
+                Counter: AggregationTemporality.DELTA,
+            },
+        )
+        pmr = PeriodicExportingMetricReader(exporter)
+        for key, value in pmr._instrument_class_temporality.items():
+            if key is not _Counter:
+                self.assertEqual(value, AggregationTemporality.CUMULATIVE)
+            else:
+                self.assertEqual(value, AggregationTemporality.DELTA)
+
+    def test_exporter_aggregation_preference(self):
+        exporter = FakeMetricsExporter(
+            preferred_aggregation={
+                Counter: LastValueAggregation(),
+            },
+        )
+        pmr = PeriodicExportingMetricReader(exporter)
+        for key, value in pmr._instrument_class_aggregation.items():
+            if key is not _Counter:
+                self.assertTrue(isinstance(value, DefaultAggregation))
+            else:
+                self.assertTrue(isinstance(value, LastValueAggregation))

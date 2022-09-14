@@ -1,6 +1,6 @@
 Metadata-Version: 2.1
 Name: opentelemetry-sdk
-Version: 1.11.1
+Version: 1.12.0
 Summary: OpenTelemetry Python SDK
 Home-page: https://github.com/open-telemetry/opentelemetry-python/tree/main/opentelemetry-sdk
 Author: OpenTelemetry Authors
@@ -42,5 +42,3 @@ References
 ----------
 
 * `OpenTelemetry Project <https://opentelemetry.io/>`_
-
-
