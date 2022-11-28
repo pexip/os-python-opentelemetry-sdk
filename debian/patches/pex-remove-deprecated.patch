@@ -1,0 +1,340 @@
+--- a/src/opentelemetry/sdk/trace/__init__.py
++++ b/src/opentelemetry/sdk/trace/__init__.py
+@@ -37,8 +37,6 @@
+     Union,
+ )
+ 
+-from deprecated import deprecated
+-
+ from opentelemetry import context as context_api
+ from opentelemetry import trace as trace_api
+ from opentelemetry.attributes import BoundedAttributes
+@@ -57,10 +55,7 @@
+ from opentelemetry.sdk.trace import sampling
+ from opentelemetry.sdk.trace.id_generator import IdGenerator, RandomIdGenerator
+ from opentelemetry.sdk.util import BoundedList
+-from opentelemetry.sdk.util.instrumentation import (
+-    InstrumentationInfo,
+-    InstrumentationScope,
+-)
++from opentelemetry.sdk.util.instrumentation import InstrumentationScope
+ from opentelemetry.trace import SpanContext
+ from opentelemetry.trace.status import Status, StatusCode
+ from opentelemetry.util import types
+@@ -358,7 +353,6 @@
+         events: Sequence[Event] = (),
+         links: Sequence[trace_api.Link] = (),
+         kind: trace_api.SpanKind = trace_api.SpanKind.INTERNAL,
+-        instrumentation_info: InstrumentationInfo = None,
+         status: Status = Status(StatusCode.UNSET),
+         start_time: Optional[int] = None,
+         end_time: Optional[int] = None,
+@@ -367,7 +361,6 @@
+         self._name = name
+         self._context = context
+         self._kind = kind
+-        self._instrumentation_info = instrumentation_info
+         self._instrumentation_scope = instrumentation_scope
+         self._parent = parent
+         self._start_time = start_time
+@@ -444,13 +437,6 @@
+         return self._resource
+ 
+     @property
+-    @deprecated(
+-        version="1.11.1", reason="You should use instrumentation_scope"
+-    )
+-    def instrumentation_info(self) -> InstrumentationInfo:
+-        return self._instrumentation_info
+-
+-    @property
+     def instrumentation_scope(self) -> InstrumentationScope:
+         return self._instrumentation_scope
+ 
+@@ -739,7 +725,6 @@
+         links: Sequence[trace_api.Link] = (),
+         kind: trace_api.SpanKind = trace_api.SpanKind.INTERNAL,
+         span_processor: SpanProcessor = SpanProcessor(),
+-        instrumentation_info: InstrumentationInfo = None,
+         record_exception: bool = True,
+         set_status_on_exception: bool = True,
+         limits=_UnsetLimits,
+@@ -751,7 +736,6 @@
+             parent=parent,
+             kind=kind,
+             resource=resource,
+-            instrumentation_info=instrumentation_info,
+             instrumentation_scope=instrumentation_scope,
+         )
+         self._sampler = sampler
+@@ -850,7 +834,6 @@
+             status=self._status,
+             start_time=self._start_time,
+             end_time=self._end_time,
+-            instrumentation_info=self._instrumentation_info,
+             instrumentation_scope=self._instrumentation_scope,
+         )
+ 
+@@ -989,7 +972,6 @@
+             SynchronousMultiSpanProcessor, ConcurrentMultiSpanProcessor
+         ],
+         id_generator: IdGenerator,
+-        instrumentation_info: InstrumentationInfo,
+         span_limits: SpanLimits,
+         instrumentation_scope: InstrumentationScope,
+     ) -> None:
+@@ -997,7 +979,6 @@
+         self.resource = resource
+         self.span_processor = span_processor
+         self.id_generator = id_generator
+-        self.instrumentation_info = instrumentation_info
+         self._span_limits = span_limits
+         self._instrumentation_scope = instrumentation_scope
+ 
+@@ -1098,7 +1079,6 @@
+                 span_processor=self.span_processor,
+                 kind=kind,
+                 links=links,
+-                instrumentation_info=self.instrumentation_info,
+                 record_exception=record_exception,
+                 set_status_on_exception=set_status_on_exception,
+                 limits=self._span_limits,
+@@ -1159,11 +1139,6 @@
+             self.resource,
+             self._active_span_processor,
+             self.id_generator,
+-            InstrumentationInfo(
+-                instrumenting_module_name,
+-                instrumenting_library_version,
+-                schema_url,
+-            ),
+             self._span_limits,
+             InstrumentationScope(
+                 instrumenting_module_name,
+--- a/src/opentelemetry/sdk/util/__init__.py
++++ b/src/opentelemetry/sdk/util/__init__.py
+@@ -89,62 +89,3 @@
+         bounded_list = cls(maxlen)
+         bounded_list.extend(seq)
+         return bounded_list
+-
+-
+-@deprecated(version="1.4.0")  # type: ignore
+-class BoundedDict(MutableMapping):
+-    """An ordered dict with a fixed max capacity.
+-
+-    Oldest elements are dropped when the dict is full and a new element is
+-    added.
+-    """
+-
+-    def __init__(self, maxlen: Optional[int]):
+-        if maxlen is not None:
+-            if not isinstance(maxlen, int):
+-                raise ValueError
+-            if maxlen < 0:
+-                raise ValueError
+-        self.maxlen = maxlen
+-        self.dropped = 0
+-        self._dict = OrderedDict()  # type: OrderedDict
+-        self._lock = threading.Lock()  # type: threading.Lock
+-
+-    def __repr__(self):
+-        return (
+-            f"{type(self).__name__}({dict(self._dict)}, maxlen={self.maxlen})"
+-        )
+-
+-    def __getitem__(self, key):
+-        return self._dict[key]
+-
+-    def __setitem__(self, key, value):
+-        with self._lock:
+-            if self.maxlen is not None and self.maxlen == 0:
+-                self.dropped += 1
+-                return
+-
+-            if key in self._dict:
+-                del self._dict[key]
+-            elif self.maxlen is not None and len(self._dict) == self.maxlen:
+-                del self._dict[next(iter(self._dict.keys()))]
+-                self.dropped += 1
+-            self._dict[key] = value
+-
+-    def __delitem__(self, key):
+-        del self._dict[key]
+-
+-    def __iter__(self):
+-        with self._lock:
+-            return iter(self._dict.copy())
+-
+-    def __len__(self):
+-        return len(self._dict)
+-
+-    @classmethod
+-    def from_map(cls, maxlen, mapping):
+-        mapping = OrderedDict(mapping)
+-        bounded_dict = cls(maxlen)
+-        for key, value in mapping.items():
+-            bounded_dict[key] = value
+-        return bounded_dict
+--- a/src/opentelemetry/sdk/util/__init__.pyi
++++ b/src/opentelemetry/sdk/util/__init__.pyi
+@@ -52,22 +52,3 @@
+     def extend(self, seq: Sequence[_T]): ...
+     @classmethod
+     def from_seq(cls, maxlen: int, seq: Iterable[_T]) -> BoundedList[_T]: ...
+-
+-class BoundedDict(MutableMapping[_KT, _VT]):
+-    """An ordered dict with a fixed max capacity.
+-
+-    Oldest elements are dropped when the dict is full and a new element is
+-    added.
+-    """
+-
+-    dropped: int
+-    def __init__(self, maxlen: int): ...
+-    def __getitem__(self, k: _KT) -> _VT: ...
+-    def __setitem__(self, k: _KT, v: _VT) -> None: ...
+-    def __delitem__(self, v: _KT) -> None: ...
+-    def __iter__(self) -> Iterator[_KT]: ...
+-    def __len__(self) -> int: ...
+-    @classmethod
+-    def from_map(
+-        cls, maxlen: int, mapping: Mapping[_KT, _VT]
+-    ) -> BoundedDict[_KT, _VT]: ...
+--- a/src/opentelemetry/sdk/util/instrumentation.py
++++ b/src/opentelemetry/sdk/util/instrumentation.py
+@@ -14,65 +14,6 @@
+ from json import dumps
+ from typing import Optional
+ 
+-from deprecated import deprecated
+-
+-
+-class InstrumentationInfo:
+-    """Immutable information about an instrumentation library module.
+-
+-    See `opentelemetry.trace.TracerProvider.get_tracer` for the meaning of these
+-    properties.
+-    """
+-
+-    __slots__ = ("_name", "_version", "_schema_url")
+-
+-    @deprecated(version="1.11.1", reason="You should use InstrumentationScope")
+-    def __init__(
+-        self,
+-        name: str,
+-        version: Optional[str] = None,
+-        schema_url: Optional[str] = None,
+-    ):
+-        self._name = name
+-        self._version = version
+-        if schema_url is None:
+-            schema_url = ""
+-        self._schema_url = schema_url
+-
+-    def __repr__(self):
+-        return f"{type(self).__name__}({self._name}, {self._version}, {self._schema_url})"
+-
+-    def __hash__(self):
+-        return hash((self._name, self._version, self._schema_url))
+-
+-    def __eq__(self, value):
+-        return type(value) is type(self) and (
+-            self._name,
+-            self._version,
+-            self._schema_url,
+-        ) == (value._name, value._version, value._schema_url)
+-
+-    def __lt__(self, value):
+-        if type(value) is not type(self):
+-            return NotImplemented
+-        return (self._name, self._version, self._schema_url) < (
+-            value._name,
+-            value._version,
+-            value._schema_url,
+-        )
+-
+-    @property
+-    def schema_url(self) -> Optional[str]:
+-        return self._schema_url
+-
+-    @property
+-    def version(self) -> Optional[str]:
+-        return self._version
+-
+-    @property
+-    def name(self) -> str:
+-        return self._name
+-
+ 
+ class InstrumentationScope:
+     """A logical unit of the application code with which the emitted telemetry can be
+--- a/tests/trace/test_trace.py
++++ b/tests/trace/test_trace.py
+@@ -40,7 +40,6 @@
+ from opentelemetry.sdk.trace import Resource, sampling
+ from opentelemetry.sdk.trace.id_generator import RandomIdGenerator
+ from opentelemetry.sdk.util import ns_to_iso_str
+-from opentelemetry.sdk.util.instrumentation import InstrumentationInfo
+ from opentelemetry.test.spantestutil import (
+     get_span_with_dropped_attributes_events_links,
+     new_tracer,
+@@ -235,58 +234,6 @@
+         self.assertTrue(new_span.context.is_valid)
+         self.assertIsNone(new_span.parent)
+ 
+-    def test_instrumentation_info(self):
+-        tracer_provider = trace.TracerProvider()
+-        schema_url = "https://opentelemetry.io/schemas/1.3.0"
+-        tracer1 = tracer_provider.get_tracer("instr1")
+-        tracer2 = tracer_provider.get_tracer("instr2", "1.3b3", schema_url)
+-        span1 = tracer1.start_span("s1")
+-        span2 = tracer2.start_span("s2")
+-        self.assertEqual(
+-            span1.instrumentation_info, InstrumentationInfo("instr1", "")
+-        )
+-        self.assertEqual(
+-            span2.instrumentation_info,
+-            InstrumentationInfo("instr2", "1.3b3", schema_url),
+-        )
+-
+-        self.assertEqual(span2.instrumentation_info.schema_url, schema_url)
+-        self.assertEqual(span2.instrumentation_info.version, "1.3b3")
+-        self.assertEqual(span2.instrumentation_info.name, "instr2")
+-
+-        self.assertLess(
+-            span1.instrumentation_info, span2.instrumentation_info
+-        )  # Check sortability.
+-
+-    def test_invalid_instrumentation_info(self):
+-        tracer_provider = trace.TracerProvider()
+-        with self.assertLogs(level=ERROR):
+-            tracer1 = tracer_provider.get_tracer("")
+-        with self.assertLogs(level=ERROR):
+-            tracer2 = tracer_provider.get_tracer(None)
+-
+-        self.assertIsInstance(
+-            tracer1.instrumentation_info, InstrumentationInfo
+-        )
+-        span1 = tracer1.start_span("foo")
+-        self.assertTrue(span1.is_recording())
+-        self.assertEqual(tracer1.instrumentation_info.schema_url, "")
+-        self.assertEqual(tracer1.instrumentation_info.version, "")
+-        self.assertEqual(tracer1.instrumentation_info.name, "")
+-
+-        self.assertIsInstance(
+-            tracer2.instrumentation_info, InstrumentationInfo
+-        )
+-        span2 = tracer2.start_span("bar")
+-        self.assertTrue(span2.is_recording())
+-        self.assertEqual(tracer2.instrumentation_info.schema_url, "")
+-        self.assertEqual(tracer2.instrumentation_info.version, "")
+-        self.assertEqual(tracer2.instrumentation_info.name, "")
+-
+-        self.assertEqual(
+-            tracer1.instrumentation_info, tracer2.instrumentation_info
+-        )
+-
+     def test_span_processor_for_source(self):
+         tracer_provider = trace.TracerProvider()
+         tracer1 = tracer_provider.get_tracer("instr1")
