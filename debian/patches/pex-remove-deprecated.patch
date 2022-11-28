@@ -113,7 +113,16 @@
                  instrumenting_module_name,
 --- a/src/opentelemetry/sdk/util/__init__.py
 +++ b/src/opentelemetry/sdk/util/__init__.py
-@@ -89,62 +89,3 @@
+@@ -18,8 +18,6 @@
+ from collections.abc import MutableMapping, Sequence
+ from typing import Optional
+ 
+-from deprecated import deprecated
+-
+ 
+ def ns_to_iso_str(nanoseconds):
+     """Get an ISO 8601 string from time_ns value."""
+@@ -89,62 +87,3 @@
          bounded_list = cls(maxlen)
          bounded_list.extend(seq)
          return bounded_list
