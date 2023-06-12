@@ -1,3 +1,9 @@
+python-opentelemetry-sdk (1.18.0-0pexip1) pexip; urgency=medium
+
+  * New upstream release
+
+ -- Huw Jones <huw@pexip.com>  Mon, 12 Jun 2023 13:46:19 +0100
+
 python-opentelemetry-sdk (1.12.0-0pexip3) pexip; urgency=medium
 
   * Fix botched attempt at removing deprecated functions
