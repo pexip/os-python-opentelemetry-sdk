@@ -2,6 +2,7 @@ python-opentelemetry-sdk (1.18.0-0pexip1) pexip; urgency=medium
 
   * New upstream release
   * Refresh patches
+  * Fix build
 
  -- Huw Jones <huw@pexip.com>  Mon, 12 Jun 2023 13:46:19 +0100
 
