@@ -1,15 +1,15 @@
 --- a/src/opentelemetry/sdk/trace/__init__.py
 +++ b/src/opentelemetry/sdk/trace/__init__.py
-@@ -37,8 +37,6 @@
-     Union,
+@@ -39,8 +39,6 @@
  )
+ from warnings import filterwarnings
  
 -from deprecated import deprecated
 -
  from opentelemetry import context as context_api
  from opentelemetry import trace as trace_api
  from opentelemetry.attributes import BoundedAttributes
-@@ -57,10 +55,7 @@
+@@ -59,10 +57,7 @@
  from opentelemetry.sdk.trace import sampling
  from opentelemetry.sdk.trace.id_generator import IdGenerator, RandomIdGenerator
  from opentelemetry.sdk.util import BoundedList
@@ -21,7 +21,7 @@
  from opentelemetry.trace import SpanContext
  from opentelemetry.trace.status import Status, StatusCode
  from opentelemetry.util import types
-@@ -358,7 +353,6 @@
+@@ -356,7 +351,6 @@
          events: Sequence[Event] = (),
          links: Sequence[trace_api.Link] = (),
          kind: trace_api.SpanKind = trace_api.SpanKind.INTERNAL,
@@ -29,7 +29,7 @@
          status: Status = Status(StatusCode.UNSET),
          start_time: Optional[int] = None,
          end_time: Optional[int] = None,
-@@ -367,7 +361,6 @@
+@@ -365,7 +359,6 @@
          self._name = name
          self._context = context
          self._kind = kind
@@ -37,7 +37,7 @@
          self._instrumentation_scope = instrumentation_scope
          self._parent = parent
          self._start_time = start_time
-@@ -444,13 +437,6 @@
+@@ -442,13 +435,6 @@
          return self._resource
  
      @property
@@ -51,7 +51,7 @@
      def instrumentation_scope(self) -> InstrumentationScope:
          return self._instrumentation_scope
  
-@@ -739,7 +725,6 @@
+@@ -751,7 +737,6 @@
          links: Sequence[trace_api.Link] = (),
          kind: trace_api.SpanKind = trace_api.SpanKind.INTERNAL,
          span_processor: SpanProcessor = SpanProcessor(),
@@ -59,7 +59,7 @@
          record_exception: bool = True,
          set_status_on_exception: bool = True,
          limits=_UnsetLimits,
-@@ -751,7 +736,6 @@
+@@ -763,7 +748,6 @@
              parent=parent,
              kind=kind,
              resource=resource,
@@ -67,7 +67,7 @@
              instrumentation_scope=instrumentation_scope,
          )
          self._sampler = sampler
-@@ -850,7 +834,6 @@
+@@ -862,7 +846,6 @@
              status=self._status,
              start_time=self._start_time,
              end_time=self._end_time,
@@ -75,7 +75,7 @@
              instrumentation_scope=self._instrumentation_scope,
          )
  
-@@ -989,7 +972,6 @@
+@@ -1001,7 +984,6 @@
              SynchronousMultiSpanProcessor, ConcurrentMultiSpanProcessor
          ],
          id_generator: IdGenerator,
@@ -83,7 +83,7 @@
          span_limits: SpanLimits,
          instrumentation_scope: InstrumentationScope,
      ) -> None:
-@@ -997,7 +979,6 @@
+@@ -1009,7 +991,6 @@
          self.resource = resource
          self.span_processor = span_processor
          self.id_generator = id_generator
@@ -91,7 +91,7 @@
          self._span_limits = span_limits
          self._instrumentation_scope = instrumentation_scope
  
-@@ -1098,7 +1079,6 @@
+@@ -1110,7 +1091,6 @@
                  span_processor=self.span_processor,
                  kind=kind,
                  links=links,
@@ -99,15 +99,22 @@
                  record_exception=record_exception,
                  set_status_on_exception=set_status_on_exception,
                  limits=self._span_limits,
-@@ -1159,11 +1139,6 @@
+@@ -1179,18 +1159,11 @@
+             module="opentelemetry.sdk.trace",
+         )
+ 
+-        instrumentation_info = InstrumentationInfo(
+-            instrumenting_module_name,
+-            instrumenting_library_version,
+-            schema_url,
+-        )
+-
+         return Tracer(
+             self.sampler,
              self.resource,
              self._active_span_processor,
              self.id_generator,
--            InstrumentationInfo(
--                instrumenting_module_name,
--                instrumenting_library_version,
--                schema_url,
--            ),
+-            instrumentation_info,
              self._span_limits,
              InstrumentationScope(
                  instrumenting_module_name,
@@ -280,15 +287,15 @@
      """A logical unit of the application code with which the emitted telemetry can be
 --- a/tests/trace/test_trace.py
 +++ b/tests/trace/test_trace.py
-@@ -40,7 +40,6 @@
- from opentelemetry.sdk.trace import Resource, sampling
- from opentelemetry.sdk.trace.id_generator import RandomIdGenerator
- from opentelemetry.sdk.util import ns_to_iso_str
+@@ -50,7 +50,6 @@
+     StaticSampler,
+ )
+ from opentelemetry.sdk.util import BoundedDict, ns_to_iso_str
 -from opentelemetry.sdk.util.instrumentation import InstrumentationInfo
  from opentelemetry.test.spantestutil import (
      get_span_with_dropped_attributes_events_links,
      new_tracer,
-@@ -235,58 +234,6 @@
+@@ -258,58 +257,6 @@
          self.assertTrue(new_span.context.is_valid)
          self.assertIsNone(new_span.parent)
  
