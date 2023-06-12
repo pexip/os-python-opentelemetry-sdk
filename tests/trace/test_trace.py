@@ -13,14 +13,17 @@
 # limitations under the License.
 
 # pylint: disable=too-many-lines
+
 import shutil
 import subprocess
 import unittest
 from importlib import reload
 from logging import ERROR, WARNING
 from random import randint
+from time import time_ns
 from typing import Optional
 from unittest import mock
+from unittest.mock import Mock
 
 from opentelemetry import trace as trace_api
 from opentelemetry.context import Context
@@ -37,19 +40,36 @@ from opentelemetry.sdk.environment_variables import (
     OTEL_TRACES_SAMPLER,
     OTEL_TRACES_SAMPLER_ARG,
 )
-from opentelemetry.sdk.trace import Resource, sampling
+from opentelemetry.sdk.trace import Resource, TracerProvider
 from opentelemetry.sdk.trace.id_generator import RandomIdGenerator
-from opentelemetry.sdk.util import ns_to_iso_str
+from opentelemetry.sdk.trace.sampling import (
+    ALWAYS_OFF,
+    ALWAYS_ON,
+    Decision,
+    ParentBased,
+    StaticSampler,
+)
+from opentelemetry.sdk.util import BoundedDict, ns_to_iso_str
 from opentelemetry.sdk.util.instrumentation import InstrumentationInfo
 from opentelemetry.test.spantestutil import (
     get_span_with_dropped_attributes_events_links,
     new_tracer,
 )
 from opentelemetry.trace import Status, StatusCode
-from opentelemetry.util._time import _time_ns
 
 
 class TestTracer(unittest.TestCase):
+    def test_no_deprecated_warning(self):
+        with self.assertRaises(AssertionError):
+            with self.assertWarns(DeprecationWarning):
+                TracerProvider(Mock(), Mock()).get_tracer(Mock(), Mock())
+
+        # This is being added here to make sure the filter on
+        # InstrumentationInfo does not affect other DeprecationWarnings that
+        # may be raised.
+        with self.assertWarns(DeprecationWarning):
+            BoundedDict(0)
+
     def test_extends_api(self):
         tracer = new_tracer()
         self.assertIsInstance(tracer, trace.Tracer)
@@ -118,7 +138,7 @@ tracer_provider.add_span_processor(mock_processor)
         self.assertTrue(out.startswith(b"1"))
 
         # test that shutdown is called only once even if Tracer.shutdown is
-        # called explicitely
+        # called explicitly
         out = run_general_code(True, True)
         self.assertTrue(out.startswith(b"1"))
 
@@ -164,12 +184,11 @@ class TestTracerSampling(unittest.TestCase):
 
     def test_default_sampler_type(self):
         tracer_provider = trace.TracerProvider()
-        self.assertIsInstance(tracer_provider.sampler, sampling.ParentBased)
-        # pylint: disable=protected-access
-        self.assertEqual(tracer_provider.sampler._root, sampling.ALWAYS_ON)
+        self.verify_default_sampler(tracer_provider)
 
-    def test_sampler_no_sampling(self):
-        tracer_provider = trace.TracerProvider(sampling.ALWAYS_OFF)
+    @mock.patch("opentelemetry.sdk.trace.sampling._get_from_env_or_default")
+    def test_sampler_no_sampling(self, _get_from_env_or_default):
+        tracer_provider = trace.TracerProvider(ALWAYS_OFF)
         tracer = tracer_provider.get_tracer(__name__)
 
         # Check that the default tracer creates no-op spans if the sampler
@@ -187,16 +206,15 @@ class TestTracerSampling(unittest.TestCase):
             child_span.get_span_context().trace_flags,
             trace_api.TraceFlags.DEFAULT,
         )
+        self.assertFalse(_get_from_env_or_default.called)
 
     @mock.patch.dict("os.environ", {OTEL_TRACES_SAMPLER: "always_off"})
     def test_sampler_with_env(self):
         # pylint: disable=protected-access
         reload(trace)
         tracer_provider = trace.TracerProvider()
-        self.assertIsInstance(tracer_provider.sampler, sampling.StaticSampler)
-        self.assertEqual(
-            tracer_provider.sampler._decision, sampling.Decision.DROP
-        )
+        self.assertIsInstance(tracer_provider.sampler, StaticSampler)
+        self.assertEqual(tracer_provider.sampler._decision, Decision.DROP)
 
         tracer = tracer_provider.get_tracer(__name__)
 
@@ -215,8 +233,13 @@ class TestTracerSampling(unittest.TestCase):
         # pylint: disable=protected-access
         reload(trace)
         tracer_provider = trace.TracerProvider()
-        self.assertIsInstance(tracer_provider.sampler, sampling.ParentBased)
+        self.assertIsInstance(tracer_provider.sampler, ParentBased)
         self.assertEqual(tracer_provider.sampler._root.rate, 0.25)
+
+    def verify_default_sampler(self, tracer_provider):
+        self.assertIsInstance(tracer_provider.sampler, ParentBased)
+        # pylint: disable=protected-access
+        self.assertEqual(tracer_provider.sampler._root, ALWAYS_ON)
 
 
 class TestSpanCreation(unittest.TestCase):
@@ -711,7 +734,7 @@ class TestSpan(unittest.TestCase):
             "attr-in-both": "decision-attr",
         }
         tracer_provider = trace.TracerProvider(
-            sampling.StaticSampler(sampling.Decision.RECORD_AND_SAMPLE)
+            StaticSampler(Decision.RECORD_AND_SAMPLE)
         )
 
         self.tracer = tracer_provider.get_tracer(__name__)
@@ -740,7 +763,7 @@ class TestSpan(unittest.TestCase):
             )
 
             # event name, attributes and timestamp
-            now = _time_ns()
+            now = time_ns()
             root.add_event("event2", {"name": ["birthday"]}, now)
 
             mutable_list = ["original_contents"]

@@ -12,13 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import time
-from typing import Sequence
+import math
+from time import sleep, time_ns
+from typing import Optional, Sequence
 from unittest.mock import Mock
 
 from flaky import flaky
 
-from opentelemetry.sdk.metrics import Counter
+from opentelemetry.sdk.metrics import Counter, MetricsTimeoutError
 from opentelemetry.sdk.metrics._internal import _Counter
 from opentelemetry.sdk.metrics.export import (
     AggregationTemporality,
@@ -35,7 +36,6 @@ from opentelemetry.sdk.metrics.view import (
     LastValueAggregation,
 )
 from opentelemetry.test.concurrency_test import ConcurrencyTestBase
-from opentelemetry.util._time import _time_ns
 
 
 class FakeMetricsExporter(MetricExporter):
@@ -56,7 +56,7 @@ class FakeMetricsExporter(MetricExporter):
         timeout_millis: float = 10_000,
         **kwargs,
     ) -> MetricExportResult:
-        time.sleep(self.wait)
+        sleep(self.wait)
         self.metrics.extend(metrics)
         return True
 
@@ -65,6 +65,25 @@ class FakeMetricsExporter(MetricExporter):
 
     def force_flush(self, timeout_millis: float = 10_000) -> bool:
         return True
+
+
+class ExceptionAtCollectionPeriodicExportingMetricReader(
+    PeriodicExportingMetricReader
+):
+    def __init__(
+        self,
+        exporter: MetricExporter,
+        exception: Exception,
+        export_interval_millis: Optional[float] = None,
+        export_timeout_millis: Optional[float] = None,
+    ) -> None:
+        super().__init__(
+            exporter, export_interval_millis, export_timeout_millis
+        )
+        self._collect_exception = exception
+
+    def collect(self, timeout_millis: float = 10_000) -> None:
+        raise self._collect_exception
 
 
 metrics_list = [
@@ -76,8 +95,8 @@ metrics_list = [
             data_points=[
                 NumberDataPoint(
                     attributes={},
-                    start_time_unix_nano=_time_ns(),
-                    time_unix_nano=_time_ns(),
+                    start_time_unix_nano=time_ns(),
+                    time_unix_nano=time_ns(),
                     value=2,
                 )
             ],
@@ -93,8 +112,8 @@ metrics_list = [
             data_points=[
                 NumberDataPoint(
                     attributes={},
-                    start_time_unix_nano=_time_ns(),
-                    time_unix_nano=_time_ns(),
+                    start_time_unix_nano=time_ns(),
+                    time_unix_nano=time_ns(),
                     value=2,
                 )
             ]
@@ -111,15 +130,17 @@ class TestPeriodicExportingMetricReader(ConcurrencyTestBase):
         pmr.shutdown()
 
     def _create_periodic_reader(
-        self, metrics, exporter, collect_wait=0, interval=60000
+        self, metrics, exporter, collect_wait=0, interval=60000, timeout=30000
     ):
 
         pmr = PeriodicExportingMetricReader(
-            exporter, export_interval_millis=interval
+            exporter,
+            export_interval_millis=interval,
+            export_timeout_millis=timeout,
         )
 
         def _collect(reader, timeout_millis):
-            time.sleep(collect_wait)
+            sleep(collect_wait)
             pmr._receive_metrics(metrics, timeout_millis)
 
         pmr._set_collect_callback(_collect)
@@ -131,9 +152,41 @@ class TestPeriodicExportingMetricReader(ConcurrencyTestBase):
         exporter.export = Mock()
         pmr = PeriodicExportingMetricReader(exporter, export_interval_millis=1)
         pmr._set_collect_callback(collect_mock)
-        time.sleep(0.1)
+        sleep(0.1)
         self.assertTrue(collect_mock.assert_called_once)
         pmr.shutdown()
+
+    def test_ticker_not_called_on_infinity(self):
+        collect_mock = Mock()
+        exporter = FakeMetricsExporter()
+        exporter.export = Mock()
+        pmr = PeriodicExportingMetricReader(
+            exporter, export_interval_millis=math.inf
+        )
+        pmr._set_collect_callback(collect_mock)
+        sleep(0.1)
+        self.assertTrue(collect_mock.assert_not_called)
+        pmr.shutdown()
+
+    def test_ticker_value_exception_on_zero(self):
+        exporter = FakeMetricsExporter()
+        exporter.export = Mock()
+        self.assertRaises(
+            ValueError,
+            PeriodicExportingMetricReader,
+            exporter,
+            export_interval_millis=0,
+        )
+
+    def test_ticker_value_exception_on_negative(self):
+        exporter = FakeMetricsExporter()
+        exporter.export = Mock()
+        self.assertRaises(
+            ValueError,
+            PeriodicExportingMetricReader,
+            exporter,
+            export_interval_millis=-100,
+        )
 
     @flaky(max_runs=3, min_passes=1)
     def test_ticker_collects_metrics(self):
@@ -142,7 +195,7 @@ class TestPeriodicExportingMetricReader(ConcurrencyTestBase):
         pmr = self._create_periodic_reader(
             metrics_list, exporter, interval=100
         )
-        time.sleep(0.15)
+        sleep(0.15)
         self.assertEqual(exporter.metrics, metrics_list)
         pmr.shutdown()
 
@@ -187,3 +240,15 @@ class TestPeriodicExportingMetricReader(ConcurrencyTestBase):
                 self.assertTrue(isinstance(value, DefaultAggregation))
             else:
                 self.assertTrue(isinstance(value, LastValueAggregation))
+
+    def test_metric_timeout_does_not_kill_worker_thread(self):
+        exporter = FakeMetricsExporter()
+        pmr = ExceptionAtCollectionPeriodicExportingMetricReader(
+            exporter,
+            MetricsTimeoutError("test timeout"),
+            export_timeout_millis=1,
+        )
+
+        sleep(0.1)
+        self.assertTrue(pmr._daemon_thread.is_alive())
+        pmr.shutdown()

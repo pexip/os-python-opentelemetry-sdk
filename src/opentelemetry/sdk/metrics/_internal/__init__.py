@@ -15,6 +15,7 @@
 from atexit import register, unregister
 from logging import getLogger
 from threading import Lock
+from time import time_ns
 from typing import Optional, Sequence
 
 # This kind of import is needed to avoid Sphinx errors.
@@ -49,7 +50,6 @@ from opentelemetry.sdk.metrics._internal.sdk_configuration import (
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.util.instrumentation import InstrumentationScope
 from opentelemetry.util._once import Once
-from opentelemetry.util._time import _time_ns
 
 _logger = getLogger(__name__)
 
@@ -62,7 +62,11 @@ class Meter(APIMeter):
         instrumentation_scope: InstrumentationScope,
         measurement_consumer: MeasurementConsumer,
     ):
-        super().__init__(instrumentation_scope)
+        super().__init__(
+            name=instrumentation_scope.name,
+            version=instrumentation_scope.version,
+            schema_url=instrumentation_scope.schema_url,
+        )
         self._instrumentation_scope = instrumentation_scope
         self._measurement_consumer = measurement_consumer
         self._instrument_id_instrument = {}
@@ -357,6 +361,8 @@ class MeterProvider(APIMeterProvider):
             self._atexit_handler = register(self.shutdown)
 
         self._meters = {}
+        self._shutdown_once = Once()
+        self._shutdown = False
 
         for metric_reader in self._sdk_config.metric_readers:
 
@@ -373,16 +379,13 @@ class MeterProvider(APIMeterProvider):
                 self._measurement_consumer.collect
             )
 
-        self._shutdown_once = Once()
-        self._shutdown = False
-
     def force_flush(self, timeout_millis: float = 10_000) -> bool:
-        deadline_ns = _time_ns() + timeout_millis * 10**6
+        deadline_ns = time_ns() + timeout_millis * 10**6
 
         metric_reader_error = {}
 
         for metric_reader in self._sdk_config.metric_readers:
-            current_ts = _time_ns()
+            current_ts = time_ns()
             try:
                 if current_ts >= deadline_ns:
                     raise MetricsTimeoutError(
@@ -414,7 +417,7 @@ class MeterProvider(APIMeterProvider):
         return True
 
     def shutdown(self, timeout_millis: float = 30_000):
-        deadline_ns = _time_ns() + timeout_millis * 10**6
+        deadline_ns = time_ns() + timeout_millis * 10**6
 
         def _shutdown():
             self._shutdown = True
@@ -428,7 +431,7 @@ class MeterProvider(APIMeterProvider):
         metric_reader_error = {}
 
         for metric_reader in self._sdk_config.metric_readers:
-            current_ts = _time_ns()
+            current_ts = time_ns()
             try:
                 if current_ts >= deadline_ns:
                     raise Exception(

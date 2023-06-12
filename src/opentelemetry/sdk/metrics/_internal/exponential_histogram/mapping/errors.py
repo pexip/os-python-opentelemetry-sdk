@@ -12,18 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
 
-import setuptools
+class MappingUnderflowError(Exception):
+    """
+    Raised when computing the lower boundary of an index that maps into a
+    denormal floating point value.
+    """
 
-BASE_DIR = os.path.dirname(__file__)
-VERSION_FILENAME = os.path.join(
-    BASE_DIR, "src", "opentelemetry", "sdk", "version.py"
-)
-PACKAGE_INFO = {}
-with open(VERSION_FILENAME, encoding="utf-8") as f:
-    exec(f.read(), PACKAGE_INFO)
 
-setuptools.setup(
-    version=PACKAGE_INFO["__version__"],
-)
+class MappingOverflowError(Exception):
+    """
+    Raised when computing the lower boundary of an index that maps into +inf.
+    """

@@ -14,6 +14,7 @@
 
 from logging import getLogger
 from threading import RLock
+from time import time_ns
 from typing import Dict, List
 
 from opentelemetry.metrics import (
@@ -30,12 +31,14 @@ from opentelemetry.sdk.metrics._internal.aggregation import (
     ExplicitBucketHistogramAggregation,
     _DropAggregation,
     _ExplicitBucketHistogramAggregation,
+    _ExponentialBucketHistogramAggregation,
     _LastValueAggregation,
     _SumAggregation,
 )
 from opentelemetry.sdk.metrics._internal.export import AggregationTemporality
 from opentelemetry.sdk.metrics._internal.measurement import Measurement
 from opentelemetry.sdk.metrics._internal.point import (
+    ExponentialHistogram,
     Gauge,
     Histogram,
     Metric,
@@ -49,7 +52,6 @@ from opentelemetry.sdk.metrics._internal.sdk_configuration import (
 )
 from opentelemetry.sdk.metrics._internal.view import View
 from opentelemetry.sdk.util.instrumentation import InstrumentationScope
-from opentelemetry.util._time import _time_ns
 
 _logger = getLogger(__name__)
 
@@ -130,7 +132,7 @@ class MetricReaderStorage:
         # streams produced by the SDK, but we still align the output timestamps
         # for a single instrument.
 
-        collection_start_nanos = _time_ns()
+        collection_start_nanos = time_ns()
 
         with self._lock:
 
@@ -191,6 +193,18 @@ class MetricReaderStorage:
                         _DropAggregation,
                     ):
                         continue
+
+                    elif isinstance(
+                        # pylint: disable=protected-access
+                        view_instrument_match._aggregation,
+                        _ExponentialBucketHistogramAggregation,
+                    ):
+                        data = ExponentialHistogram(
+                            data_points=view_instrument_match.collect(
+                                aggregation_temporality, collection_start_nanos
+                            ),
+                            aggregation_temporality=aggregation_temporality,
+                        )
 
                     metrics.append(
                         Metric(
