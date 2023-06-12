@@ -24,6 +24,7 @@ import typing
 from collections import OrderedDict
 from contextlib import contextmanager
 from os import environ
+from time import time_ns
 from types import MappingProxyType, TracebackType
 from typing import (
     Any,
@@ -36,6 +37,7 @@ from typing import (
     Type,
     Union,
 )
+from warnings import filterwarnings
 
 from deprecated import deprecated
 
@@ -64,7 +66,6 @@ from opentelemetry.sdk.util.instrumentation import (
 from opentelemetry.trace import SpanContext
 from opentelemetry.trace.status import Status, StatusCode
 from opentelemetry.util import types
-from opentelemetry.util._time import _time_ns
 
 logger = logging.getLogger(__name__)
 
@@ -77,9 +78,6 @@ _DEFAULT_OTEL_SPAN_LINK_COUNT_LIMIT = 128
 
 
 _ENV_VALUE_UNSET = ""
-
-# pylint: disable=protected-access
-_TRACE_SAMPLER = sampling._get_from_env_or_default()
 
 
 class SpanProcessor:
@@ -184,9 +182,9 @@ class SynchronousMultiSpanProcessor(SpanProcessor):
             True if all span processors flushed their spans within the
             given timeout, False otherwise.
         """
-        deadline_ns = _time_ns() + timeout_millis * 1000000
+        deadline_ns = time_ns() + timeout_millis * 1000000
         for sp in self._span_processors:
-            current_time_ns = _time_ns()
+            current_time_ns = time_ns()
             if current_time_ns >= deadline_ns:
                 return False
 
@@ -286,7 +284,7 @@ class EventBase(abc.ABC):
     def __init__(self, name: str, timestamp: Optional[int] = None) -> None:
         self._name = name
         if timestamp is None:
-            self._timestamp = _time_ns()
+            self._timestamp = time_ns()
         else:
             self._timestamp = timestamp
 
@@ -334,7 +332,7 @@ def _check_span_ended(func):
     def wrapper(self, *args, **kwargs):
         already_ended = False
         with self._lock:  # pylint: disable=protected-access
-            if self._end_time is None:
+            if self._end_time is None:  # pylint: disable=protected-access
                 func(self, *args, **kwargs)
             else:
                 already_ended = True
@@ -519,7 +517,11 @@ class ReadableSpan:
             f_event = OrderedDict()
             f_event["name"] = event.name
             f_event["timestamp"] = util.ns_to_iso_str(event.timestamp)
-            f_event["attributes"] = Span._format_attributes(event.attributes)
+            f_event[
+                "attributes"
+            ] = Span._format_attributes(  # pylint: disable=protected-access
+                event.attributes
+            )
             f_events.append(f_event)
         return f_events
 
@@ -528,8 +530,16 @@ class ReadableSpan:
         f_links = []
         for link in links:
             f_link = OrderedDict()
-            f_link["context"] = Span._format_context(link.context)
-            f_link["attributes"] = Span._format_attributes(link.attributes)
+            f_link[
+                "context"
+            ] = Span._format_context(  # pylint: disable=protected-access
+                link.context
+            )
+            f_link[
+                "attributes"
+            ] = Span._format_attributes(  # pylint: disable=protected-access
+                link.attributes
+            )
             f_links.append(f_link)
         return f_links
 
@@ -691,10 +701,12 @@ _UnsetLimits = SpanLimits(
 )
 
 # not removed for backward compat. please use SpanLimits instead.
-SPAN_ATTRIBUTE_COUNT_LIMIT = SpanLimits._from_env_if_absent(
-    None,
-    OTEL_SPAN_ATTRIBUTE_COUNT_LIMIT,
-    _DEFAULT_OTEL_SPAN_ATTRIBUTE_COUNT_LIMIT,
+SPAN_ATTRIBUTE_COUNT_LIMIT = (
+    SpanLimits._from_env_if_absent(  # pylint: disable=protected-access
+        None,
+        OTEL_SPAN_ATTRIBUTE_COUNT_LIMIT,
+        _DEFAULT_OTEL_SPAN_ATTRIBUTE_COUNT_LIMIT,
+    )
 )
 
 
@@ -864,7 +876,7 @@ class Span(trace_api.Span, ReadableSpan):
                 logger.warning("Calling start() on a started span.")
                 return
             self._start_time = (
-                start_time if start_time is not None else _time_ns()
+                start_time if start_time is not None else time_ns()
             )
 
         self._span_processor.on_start(self, parent_context=parent_context)
@@ -877,7 +889,7 @@ class Span(trace_api.Span, ReadableSpan):
                 logger.warning("Calling end() on an ended span.")
                 return
 
-            self._end_time = end_time if end_time is not None else _time_ns()
+            self._end_time = end_time if end_time is not None else time_ns()
 
         self._span_processor.on_end(self._readable_span())
 
@@ -1115,7 +1127,7 @@ class TracerProvider(trace_api.TracerProvider):
 
     def __init__(
         self,
-        sampler: sampling.Sampler = _TRACE_SAMPLER,
+        sampler: sampling.Sampler = None,
         resource: Resource = Resource.create({}),
         shutdown_on_exit: bool = True,
         active_span_processor: Union[
@@ -1132,6 +1144,8 @@ class TracerProvider(trace_api.TracerProvider):
         else:
             self.id_generator = id_generator
         self._resource = resource
+        if not sampler:
+            sampler = sampling._get_from_env_or_default()
         self.sampler = sampler
         self._span_limits = span_limits or SpanLimits()
         self._atexit_handler = None
@@ -1154,16 +1168,29 @@ class TracerProvider(trace_api.TracerProvider):
             logger.error("get_tracer called with missing module name.")
         if instrumenting_library_version is None:
             instrumenting_library_version = ""
+
+        filterwarnings(
+            "ignore",
+            message=(
+                r"Call to deprecated method __init__. \(You should use "
+                r"InstrumentationScope\) -- Deprecated since version 1.11.1."
+            ),
+            category=DeprecationWarning,
+            module="opentelemetry.sdk.trace",
+        )
+
+        instrumentation_info = InstrumentationInfo(
+            instrumenting_module_name,
+            instrumenting_library_version,
+            schema_url,
+        )
+
         return Tracer(
             self.sampler,
             self.resource,
             self._active_span_processor,
             self.id_generator,
-            InstrumentationInfo(
-                instrumenting_module_name,
-                instrumenting_library_version,
-                schema_url,
-            ),
+            instrumentation_info,
             self._span_limits,
             InstrumentationScope(
                 instrumenting_module_name,

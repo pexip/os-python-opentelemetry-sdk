@@ -12,13 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import math
 import os
 from abc import ABC, abstractmethod
 from enum import Enum
 from logging import getLogger
 from os import environ, linesep
 from sys import stdout
-from threading import Event, RLock, Thread
+from threading import Event, Lock, RLock, Thread
+from time import time_ns
 from typing import IO, Callable, Dict, Iterable, Optional
 
 from typing_extensions import final
@@ -31,10 +33,15 @@ from opentelemetry.context import (
     detach,
     set_value,
 )
+from opentelemetry.sdk.environment_variables import (
+    OTEL_METRIC_EXPORT_INTERVAL,
+    OTEL_METRIC_EXPORT_TIMEOUT,
+)
 from opentelemetry.sdk.metrics._internal.aggregation import (
     AggregationTemporality,
     DefaultAggregation,
 )
+from opentelemetry.sdk.metrics._internal.exceptions import MetricsTimeoutError
 from opentelemetry.sdk.metrics._internal.instrument import (
     Counter,
     Histogram,
@@ -51,7 +58,6 @@ from opentelemetry.sdk.metrics._internal.instrument import (
 )
 from opentelemetry.sdk.metrics._internal.point import MetricsData
 from opentelemetry.util._once import Once
-from opentelemetry.util._time import _time_ns
 
 _logger = getLogger(__name__)
 
@@ -136,8 +142,15 @@ class ConsoleMetricExporter(MetricExporter):
             ["opentelemetry.sdk.metrics.export.MetricsData"], str
         ] = lambda metrics_data: metrics_data.to_json()
         + linesep,
+        preferred_temporality: Dict[type, AggregationTemporality] = None,
+        preferred_aggregation: Dict[
+            type, "opentelemetry.sdk.metrics.view.Aggregation"
+        ] = None,
     ):
-        super().__init__()
+        super().__init__(
+            preferred_temporality=preferred_temporality,
+            preferred_aggregation=preferred_aggregation,
+        )
         self.out = out
         self.formatter = formatter
 
@@ -185,10 +198,10 @@ class MetricReader(ABC):
             to change, not necessarily all of them. The classes not included in
             the passed dictionary will retain their association to their
             default aggregations. The aggregation defined here will be
-            overriden by an aggregation defined by a view that is not
+            overridden by an aggregation defined by a view that is not
             `DefaultAggregation`.
 
-    .. document protected _receive_metrics which is a intended to be overriden by subclass
+    .. document protected _receive_metrics which is a intended to be overridden by subclass
     .. automethod:: _receive_metrics
     """
 
@@ -325,7 +338,7 @@ class MetricReader(ABC):
             Iterable["opentelemetry.sdk.metrics.export.Metric"],
         ],
     ) -> None:
-        """This function is internal to the SDK. It should not be called or overriden by users"""
+        """This function is internal to the SDK. It should not be called or overridden by users"""
         self._collect = func
 
     @abstractmethod
@@ -403,7 +416,11 @@ class InMemoryMetricReader(MetricReader):
 class PeriodicExportingMetricReader(MetricReader):
     """`PeriodicExportingMetricReader` is an implementation of `MetricReader`
     that collects metrics based on a user-configurable time interval, and passes the
-    metrics to the configured exporter.
+    metrics to the configured exporter. If the time interval is set to `math.inf`, the
+    reader will not invoke periodic collection.
+
+    The configured exporter's :py:meth:`~MetricExporter.export` method will not be called
+    concurrently.
     """
 
     def __init__(
@@ -417,11 +434,17 @@ class PeriodicExportingMetricReader(MetricReader):
             preferred_temporality=exporter._preferred_temporality,
             preferred_aggregation=exporter._preferred_aggregation,
         )
+
+        # This lock is held whenever calling self._exporter.export() to prevent concurrent
+        # execution of MetricExporter.export()
+        # https://github.com/open-telemetry/opentelemetry-specification/blob/main/specification/metrics/sdk.md#exportbatch
+        self._export_lock = Lock()
+
         self._exporter = exporter
         if export_interval_millis is None:
             try:
                 export_interval_millis = float(
-                    environ.get("OTEL_METRIC_EXPORT_INTERVAL", 60000)
+                    environ.get(OTEL_METRIC_EXPORT_INTERVAL, 60000)
                 )
             except ValueError:
                 _logger.warning(
@@ -431,7 +454,7 @@ class PeriodicExportingMetricReader(MetricReader):
         if export_timeout_millis is None:
             try:
                 export_timeout_millis = float(
-                    environ.get("OTEL_METRIC_EXPORT_TIMEOUT", 30000)
+                    environ.get(OTEL_METRIC_EXPORT_TIMEOUT, 30000)
                 )
             except ValueError:
                 _logger.warning(
@@ -443,16 +466,26 @@ class PeriodicExportingMetricReader(MetricReader):
         self._shutdown = False
         self._shutdown_event = Event()
         self._shutdown_once = Once()
-        self._daemon_thread = Thread(
-            name="OtelPeriodicExportingMetricReader",
-            target=self._ticker,
-            daemon=True,
-        )
-        self._daemon_thread.start()
-        if hasattr(os, "register_at_fork"):
-            os.register_at_fork(
-                after_in_child=self._at_fork_reinit
-            )  # pylint: disable=protected-access
+        self._daemon_thread = None
+        if (
+            self._export_interval_millis > 0
+            and self._export_interval_millis < math.inf
+        ):
+            self._daemon_thread = Thread(
+                name="OtelPeriodicExportingMetricReader",
+                target=self._ticker,
+                daemon=True,
+            )
+            self._daemon_thread.start()
+            if hasattr(os, "register_at_fork"):
+                os.register_at_fork(
+                    after_in_child=self._at_fork_reinit
+                )  # pylint: disable=protected-access
+        elif self._export_interval_millis <= 0:
+            raise ValueError(
+                f"interval value {self._export_interval_millis} is invalid \
+                and needs to be larger than zero and lower than infinity."
+            )
 
     def _at_fork_reinit(self):
         self._daemon_thread = Thread(
@@ -465,7 +498,14 @@ class PeriodicExportingMetricReader(MetricReader):
     def _ticker(self) -> None:
         interval_secs = self._export_interval_millis / 1e3
         while not self._shutdown_event.wait(interval_secs):
-            self.collect(timeout_millis=self._export_timeout_millis)
+            try:
+                self.collect(timeout_millis=self._export_timeout_millis)
+            except MetricsTimeoutError:
+                _logger.warning(
+                    "Metric collection timed out. Will try again after %s seconds",
+                    interval_secs,
+                    exc_info=True,
+                )
         # one last collection below before shutting down completely
         self.collect(timeout_millis=self._export_interval_millis)
 
@@ -479,13 +519,16 @@ class PeriodicExportingMetricReader(MetricReader):
             return
         token = attach(set_value(_SUPPRESS_INSTRUMENTATION_KEY, True))
         try:
-            self._exporter.export(metrics_data, timeout_millis=timeout_millis)
+            with self._export_lock:
+                self._exporter.export(
+                    metrics_data, timeout_millis=timeout_millis
+                )
         except Exception as e:  # pylint: disable=broad-except,invalid-name
             _logger.exception("Exception while exporting metrics %s", str(e))
         detach(token)
 
     def shutdown(self, timeout_millis: float = 30_000, **kwargs) -> None:
-        deadline_ns = _time_ns() + timeout_millis * 10**6
+        deadline_ns = time_ns() + timeout_millis * 10**6
 
         def _shutdown():
             self._shutdown = True
@@ -496,8 +539,11 @@ class PeriodicExportingMetricReader(MetricReader):
             return
 
         self._shutdown_event.set()
-        self._daemon_thread.join(timeout=(deadline_ns - _time_ns()) / 10**9)
-        self._exporter.shutdown(timeout=(deadline_ns - _time_ns()) / 10**6)
+        if self._daemon_thread:
+            self._daemon_thread.join(
+                timeout=(deadline_ns - time_ns()) / 10**9
+            )
+        self._exporter.shutdown(timeout=(deadline_ns - time_ns()) / 10**6)
 
     def force_flush(self, timeout_millis: float = 10_000) -> bool:
         super().force_flush(timeout_millis=timeout_millis)
