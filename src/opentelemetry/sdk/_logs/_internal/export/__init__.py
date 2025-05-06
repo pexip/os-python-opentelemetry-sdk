@@ -11,6 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from __future__ import annotations
 
 import abc
 import collections
@@ -19,6 +20,7 @@ import logging
 import os
 import sys
 import threading
+import weakref
 from os import environ, linesep
 from time import time_ns
 from typing import IO, Callable, Deque, List, Optional, Sequence
@@ -127,7 +129,7 @@ class SimpleLogRecordProcessor(LogRecordProcessor):
         token = attach(set_value(_SUPPRESS_INSTRUMENTATION_KEY, True))
         try:
             self._exporter.export((log_data,))
-        except Exception:  # pylint: disable=broad-except
+        except Exception:  # pylint: disable=broad-exception-caught
             _logger.exception("Exception while exporting logs.")
         detach(token)
 
@@ -135,9 +137,7 @@ class SimpleLogRecordProcessor(LogRecordProcessor):
         self._shutdown = True
         self._exporter.shutdown()
 
-    def force_flush(
-        self, timeout_millis: int = 30000
-    ) -> bool:  # pylint: disable=no-self-use
+    def force_flush(self, timeout_millis: int = 30000) -> bool:  # pylint: disable=no-self-use
         return True
 
 
@@ -166,13 +166,17 @@ class BatchLogRecordProcessor(LogRecordProcessor):
     - :envvar:`OTEL_BLRP_EXPORT_TIMEOUT`
     """
 
+    _queue: Deque[LogData]
+    _flush_request: _FlushRequest | None
+    _log_records: List[LogData | None]
+
     def __init__(
         self,
         exporter: LogExporter,
-        schedule_delay_millis: float = None,
-        max_export_batch_size: int = None,
-        export_timeout_millis: float = None,
-        max_queue_size: int = None,
+        schedule_delay_millis: float | None = None,
+        max_export_batch_size: int | None = None,
+        export_timeout_millis: float | None = None,
+        max_queue_size: int | None = None,
     ):
         if max_queue_size is None:
             max_queue_size = BatchLogRecordProcessor._default_max_queue_size()
@@ -201,9 +205,7 @@ class BatchLogRecordProcessor(LogRecordProcessor):
         self._schedule_delay_millis = schedule_delay_millis
         self._max_export_batch_size = max_export_batch_size
         self._export_timeout_millis = export_timeout_millis
-        self._queue = collections.deque(
-            [], max_queue_size
-        )  # type: Deque[LogData]
+        self._queue = collections.deque([], max_queue_size)
         self._worker_thread = threading.Thread(
             name="OtelBatchLogRecordProcessor",
             target=self.worker,
@@ -211,16 +213,12 @@ class BatchLogRecordProcessor(LogRecordProcessor):
         )
         self._condition = threading.Condition(threading.Lock())
         self._shutdown = False
-        self._flush_request = None  # type: Optional[_FlushRequest]
-        self._log_records = [
-            None
-        ] * self._max_export_batch_size  # type: List[Optional[LogData]]
+        self._flush_request = None
+        self._log_records = [None] * self._max_export_batch_size
         self._worker_thread.start()
-        # Only available in *nix since py37.
         if hasattr(os, "register_at_fork"):
-            os.register_at_fork(
-                after_in_child=self._at_fork_reinit
-            )  # pylint: disable=protected-access
+            weak_reinit = weakref.WeakMethod(self._at_fork_reinit)
+            os.register_at_fork(after_in_child=lambda: weak_reinit()())  # pylint: disable=unnecessary-lambda
         self._pid = os.getpid()
 
     def _at_fork_reinit(self):
@@ -236,7 +234,7 @@ class BatchLogRecordProcessor(LogRecordProcessor):
 
     def worker(self):
         timeout = self._schedule_delay_millis / 1e3
-        flush_request = None  # type: Optional[_FlushRequest]
+        flush_request: Optional[_FlushRequest] = None
         while not self._shutdown:
             with self._condition:
                 if self._shutdown:
@@ -307,10 +305,10 @@ class BatchLogRecordProcessor(LogRecordProcessor):
             record = self._queue.pop()
             self._log_records[idx] = record
             idx += 1
-        token = attach(set_value("suppress_instrumentation", True))
+        token = attach(set_value(_SUPPRESS_INSTRUMENTATION_KEY, True))
         try:
             self._exporter.export(self._log_records[:idx])  # type: ignore
-        except Exception:  # pylint: disable=broad-except
+        except Exception:  # pylint: disable=broad-exception-caught
             _logger.exception("Exception while exporting logs.")
         detach(token)
 

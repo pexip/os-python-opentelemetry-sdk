@@ -13,11 +13,13 @@
 # limitations under the License.
 
 # pylint: disable=protected-access
+import gc
 import logging
 import multiprocessing
 import os
 import time
 import unittest
+import weakref
 from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import Mock, patch
 
@@ -29,6 +31,7 @@ from opentelemetry.sdk._logs import (
     LoggingHandler,
     LogRecord,
 )
+from opentelemetry.sdk._logs._internal.export import _logger
 from opentelemetry.sdk._logs.export import (
     BatchLogRecordProcessor,
     ConsoleLogExporter,
@@ -58,6 +61,7 @@ class TestSimpleLogRecordProcessor(unittest.TestCase):
         )
 
         logger = logging.getLogger("default_level")
+        logger.propagate = False
         logger.addHandler(LoggingHandler(logger_provider=logger_provider))
 
         logger.warning("Something is wrong")
@@ -65,9 +69,12 @@ class TestSimpleLogRecordProcessor(unittest.TestCase):
         self.assertEqual(len(finished_logs), 1)
         warning_log_record = finished_logs[0].log_record
         self.assertEqual(warning_log_record.body, "Something is wrong")
-        self.assertEqual(warning_log_record.severity_text, "WARNING")
+        self.assertEqual(warning_log_record.severity_text, "WARN")
         self.assertEqual(
             warning_log_record.severity_number, SeverityNumber.WARN
+        )
+        self.assertEqual(
+            finished_logs[0].instrumentation_scope.name, "default_level"
         )
 
     def test_simple_log_record_processor_custom_level(self):
@@ -79,6 +86,7 @@ class TestSimpleLogRecordProcessor(unittest.TestCase):
         )
 
         logger = logging.getLogger("custom_level")
+        logger.propagate = False
         logger.setLevel(logging.ERROR)
         logger.addHandler(LoggingHandler(logger_provider=logger_provider))
 
@@ -101,6 +109,12 @@ class TestSimpleLogRecordProcessor(unittest.TestCase):
         self.assertEqual(
             fatal_log_record.severity_number, SeverityNumber.FATAL
         )
+        self.assertEqual(
+            finished_logs[0].instrumentation_scope.name, "custom_level"
+        )
+        self.assertEqual(
+            finished_logs[1].instrumentation_scope.name, "custom_level"
+        )
 
     def test_simple_log_record_processor_trace_correlation(self):
         exporter = InMemoryLogExporter()
@@ -111,6 +125,7 @@ class TestSimpleLogRecordProcessor(unittest.TestCase):
         )
 
         logger = logging.getLogger("trace_correlation")
+        logger.propagate = False
         logger.addHandler(LoggingHandler(logger_provider=logger_provider))
 
         logger.warning("Warning message")
@@ -118,12 +133,15 @@ class TestSimpleLogRecordProcessor(unittest.TestCase):
         self.assertEqual(len(finished_logs), 1)
         log_record = finished_logs[0].log_record
         self.assertEqual(log_record.body, "Warning message")
-        self.assertEqual(log_record.severity_text, "WARNING")
+        self.assertEqual(log_record.severity_text, "WARN")
         self.assertEqual(log_record.severity_number, SeverityNumber.WARN)
         self.assertEqual(log_record.trace_id, INVALID_SPAN_CONTEXT.trace_id)
         self.assertEqual(log_record.span_id, INVALID_SPAN_CONTEXT.span_id)
         self.assertEqual(
             log_record.trace_flags, INVALID_SPAN_CONTEXT.trace_flags
+        )
+        self.assertEqual(
+            finished_logs[0].instrumentation_scope.name, "trace_correlation"
         )
         exporter.clear()
 
@@ -136,6 +154,10 @@ class TestSimpleLogRecordProcessor(unittest.TestCase):
             self.assertEqual(log_record.body, "Critical message within span")
             self.assertEqual(log_record.severity_text, "CRITICAL")
             self.assertEqual(log_record.severity_number, SeverityNumber.FATAL)
+            self.assertEqual(
+                finished_logs[0].instrumentation_scope.name,
+                "trace_correlation",
+            )
             span_context = span.get_span_context()
             self.assertEqual(log_record.trace_id, span_context.trace_id)
             self.assertEqual(log_record.span_id, span_context.span_id)
@@ -150,6 +172,7 @@ class TestSimpleLogRecordProcessor(unittest.TestCase):
         )
 
         logger = logging.getLogger("shutdown")
+        logger.propagate = False
         logger.addHandler(LoggingHandler(logger_provider=logger_provider))
 
         logger.warning("Something is wrong")
@@ -157,15 +180,152 @@ class TestSimpleLogRecordProcessor(unittest.TestCase):
         self.assertEqual(len(finished_logs), 1)
         warning_log_record = finished_logs[0].log_record
         self.assertEqual(warning_log_record.body, "Something is wrong")
-        self.assertEqual(warning_log_record.severity_text, "WARNING")
+        self.assertEqual(warning_log_record.severity_text, "WARN")
         self.assertEqual(
             warning_log_record.severity_number, SeverityNumber.WARN
         )
+        self.assertEqual(
+            finished_logs[0].instrumentation_scope.name, "shutdown"
+        )
         exporter.clear()
         logger_provider.shutdown()
-        logger.warning("Log after shutdown")
+        with self.assertLogs(level=logging.WARNING):
+            logger.warning("Log after shutdown")
         finished_logs = exporter.get_finished_logs()
         self.assertEqual(len(finished_logs), 0)
+
+    def test_simple_log_record_processor_different_msg_types(self):
+        exporter = InMemoryLogExporter()
+        log_record_processor = BatchLogRecordProcessor(exporter)
+
+        provider = LoggerProvider()
+        provider.add_log_record_processor(log_record_processor)
+
+        logger = logging.getLogger("different_msg_types")
+        logger.addHandler(LoggingHandler(logger_provider=provider))
+
+        logger.warning("warning message: %s", "possible upcoming heatwave")
+        logger.error("Very high rise in temperatures across the globe")
+        logger.critical("Temperature hits high 420 C in Hyderabad")
+        logger.warning(["list", "of", "strings"])
+        logger.error({"key": "value"})
+        log_record_processor.shutdown()
+
+        finished_logs = exporter.get_finished_logs()
+        expected = [
+            ("warning message: possible upcoming heatwave", "WARN"),
+            ("Very high rise in temperatures across the globe", "ERROR"),
+            (
+                "Temperature hits high 420 C in Hyderabad",
+                "CRITICAL",
+            ),
+            (["list", "of", "strings"], "WARN"),
+            ({"key": "value"}, "ERROR"),
+        ]
+        emitted = [
+            (item.log_record.body, item.log_record.severity_text)
+            for item in finished_logs
+        ]
+        self.assertEqual(expected, emitted)
+        for item in finished_logs:
+            self.assertEqual(
+                item.instrumentation_scope.name, "different_msg_types"
+            )
+
+    def test_simple_log_record_processor_custom_single_obj(self):
+        """
+        Tests that special-case handling for logging a single non-string object
+        is correctly applied.
+        """
+        exporter = InMemoryLogExporter()
+        log_record_processor = BatchLogRecordProcessor(exporter)
+
+        provider = LoggerProvider()
+        provider.add_log_record_processor(log_record_processor)
+
+        logger = logging.getLogger("single_obj")
+        logger.addHandler(LoggingHandler(logger_provider=provider))
+
+        # NOTE: the behaviour of `record.getMessage` is detailed in the
+        # `logging.Logger.debug` documentation:
+        # > The msg is the message format string, and the args are the arguments
+        # > which are merged into msg using the string formatting operator. [...]
+        # > No % formatting operation is performed on msg when no args are supplied.
+
+        # This test uses the presence of '%s' in the first arg to determine if
+        # formatting was applied
+
+        # string msg with no args - getMessage bypasses formatting and sets the string directly
+        logger.warning("a string with a percent-s: %s")
+        # string msg with args - getMessage formats args into the msg
+        logger.warning("a string with a percent-s: %s", "and arg")
+        # non-string msg with args - getMessage stringifies msg and formats args into it
+        logger.warning(["a non-string with a percent-s", "%s"], "and arg")
+        # non-string msg with no args:
+        #  - normally getMessage would stringify the object and bypass formatting
+        #  - SPECIAL CASE: bypass stringification as well to keep the raw object
+        logger.warning(["a non-string with a percent-s", "%s"])
+        log_record_processor.shutdown()
+
+        finished_logs = exporter.get_finished_logs()
+        expected = [
+            ("a string with a percent-s: %s"),
+            ("a string with a percent-s: and arg"),
+            ("['a non-string with a percent-s', 'and arg']"),
+            (["a non-string with a percent-s", "%s"]),
+        ]
+        for emitted, expected in zip(finished_logs, expected):
+            self.assertEqual(emitted.log_record.body, expected)
+            self.assertEqual(emitted.instrumentation_scope.name, "single_obj")
+
+    def test_simple_log_record_processor_different_msg_types_with_formatter(
+        self,
+    ):
+        exporter = InMemoryLogExporter()
+        log_record_processor = BatchLogRecordProcessor(exporter)
+
+        provider = LoggerProvider()
+        provider.add_log_record_processor(log_record_processor)
+
+        logger = logging.getLogger("different_msg_types")
+        handler = LoggingHandler(logger_provider=provider)
+        handler.setFormatter(
+            logging.Formatter("%(name)s - %(levelname)s - %(message)s")
+        )
+        logger.addHandler(handler)
+
+        logger.warning("warning message: %s", "possible upcoming heatwave")
+        logger.error("Very high rise in temperatures across the globe")
+        logger.critical("Temperature hits high 420 C in Hyderabad")
+        logger.warning(["list", "of", "strings"])
+        logger.error({"key": "value"})
+        log_record_processor.shutdown()
+
+        finished_logs = exporter.get_finished_logs()
+        expected = [
+            (
+                "different_msg_types - WARNING - warning message: possible upcoming heatwave",
+                "WARN",
+            ),
+            (
+                "different_msg_types - ERROR - Very high rise in temperatures across the globe",
+                "ERROR",
+            ),
+            (
+                "different_msg_types - CRITICAL - Temperature hits high 420 C in Hyderabad",
+                "CRITICAL",
+            ),
+            (
+                "different_msg_types - WARNING - ['list', 'of', 'strings']",
+                "WARN",
+            ),
+            ("different_msg_types - ERROR - {'key': 'value'}", "ERROR"),
+        ]
+        emitted = [
+            (item.log_record.body, item.log_record.severity_text)
+            for item in finished_logs
+        ]
+        self.assertEqual(expected, emitted)
 
 
 class TestBatchLogRecordProcessor(ConcurrencyTestBase):
@@ -176,6 +336,7 @@ class TestBatchLogRecordProcessor(ConcurrencyTestBase):
         provider.add_log_record_processor(log_record_processor)
 
         logger = logging.getLogger("emit_call")
+        logger.propagate = False
         logger.addHandler(LoggingHandler(logger_provider=provider))
 
         logger.error("error")
@@ -234,7 +395,9 @@ class TestBatchLogRecordProcessor(ConcurrencyTestBase):
     )
     def test_args_env_var_value_error(self):
         exporter = InMemoryLogExporter()
+        _logger.disabled = True
         log_record_processor = BatchLogRecordProcessor(exporter)
+        _logger.disabled = False
         self.assertEqual(log_record_processor._exporter, exporter)
         self.assertEqual(log_record_processor._max_queue_size, 2048)
         self.assertEqual(log_record_processor._schedule_delay_millis, 5000)
@@ -312,16 +475,19 @@ class TestBatchLogRecordProcessor(ConcurrencyTestBase):
         logger = logging.getLogger("shutdown")
         logger.addHandler(LoggingHandler(logger_provider=provider))
 
-        logger.warning("warning message: %s", "possible upcoming heatwave")
-        logger.error("Very high rise in temperatures across the globe")
-        logger.critical("Temperature hits high 420 C in Hyderabad")
+        with self.assertLogs(level=logging.WARNING):
+            logger.warning("warning message: %s", "possible upcoming heatwave")
+        with self.assertLogs(level=logging.WARNING):
+            logger.error("Very high rise in temperatures across the globe")
+        with self.assertLogs(level=logging.WARNING):
+            logger.critical("Temperature hits high 420 C in Hyderabad")
 
         log_record_processor.shutdown()
         self.assertTrue(exporter._stopped)
 
         finished_logs = exporter.get_finished_logs()
         expected = [
-            ("warning message: possible upcoming heatwave", "WARNING"),
+            ("warning message: possible upcoming heatwave", "WARN"),
             ("Very high rise in temperatures across the globe", "ERROR"),
             (
                 "Temperature hits high 420 C in Hyderabad",
@@ -333,6 +499,8 @@ class TestBatchLogRecordProcessor(ConcurrencyTestBase):
             for item in finished_logs
         ]
         self.assertEqual(expected, emitted)
+        for item in finished_logs:
+            self.assertEqual(item.instrumentation_scope.name, "shutdown")
 
     def test_force_flush(self):
         exporter = InMemoryLogExporter()
@@ -342,6 +510,7 @@ class TestBatchLogRecordProcessor(ConcurrencyTestBase):
         provider.add_log_record_processor(log_record_processor)
 
         logger = logging.getLogger("force_flush")
+        logger.propagate = False
         logger.addHandler(LoggingHandler(logger_provider=provider))
 
         logger.critical("Earth is burning")
@@ -351,6 +520,9 @@ class TestBatchLogRecordProcessor(ConcurrencyTestBase):
         log_record = finished_logs[0].log_record
         self.assertEqual(log_record.body, "Earth is burning")
         self.assertEqual(log_record.severity_number, SeverityNumber.FATAL)
+        self.assertEqual(
+            finished_logs[0].instrumentation_scope.name, "force_flush"
+        )
 
     def test_log_record_processor_too_many_logs(self):
         exporter = InMemoryLogExporter()
@@ -360,6 +532,7 @@ class TestBatchLogRecordProcessor(ConcurrencyTestBase):
         provider.add_log_record_processor(log_record_processor)
 
         logger = logging.getLogger("many_logs")
+        logger.propagate = False
         logger.addHandler(LoggingHandler(logger_provider=provider))
 
         for log_no in range(1000):
@@ -368,6 +541,8 @@ class TestBatchLogRecordProcessor(ConcurrencyTestBase):
         self.assertTrue(log_record_processor.force_flush())
         finised_logs = exporter.get_finished_logs()
         self.assertEqual(len(finised_logs), 1000)
+        for item in finised_logs:
+            self.assertEqual(item.instrumentation_scope.name, "many_logs")
 
     def test_with_multiple_threads(self):
         exporter = InMemoryLogExporter()
@@ -377,6 +552,7 @@ class TestBatchLogRecordProcessor(ConcurrencyTestBase):
         provider.add_log_record_processor(log_record_processor)
 
         logger = logging.getLogger("threads")
+        logger.propagate = False
         logger.addHandler(LoggingHandler(logger_provider=provider))
 
         def bulk_log_and_flush(num_logs):
@@ -394,6 +570,8 @@ class TestBatchLogRecordProcessor(ConcurrencyTestBase):
 
         finished_logs = exporter.get_finished_logs()
         self.assertEqual(len(finished_logs), 2415)
+        for item in finished_logs:
+            self.assertEqual(item.instrumentation_scope.name, "threads")
 
     @unittest.skipUnless(
         hasattr(os, "fork"),
@@ -411,6 +589,7 @@ class TestBatchLogRecordProcessor(ConcurrencyTestBase):
         provider.add_log_record_processor(log_record_processor)
 
         logger = logging.getLogger("test-fork")
+        logger.propagate = False
         logger.addHandler(LoggingHandler(logger_provider=provider))
 
         logger.critical("yolo")
@@ -441,6 +620,23 @@ class TestBatchLogRecordProcessor(ConcurrencyTestBase):
         p.join()
 
         log_record_processor.shutdown()
+
+    def test_batch_log_record_processor_gc(self):
+        # Given a BatchLogRecordProcessor
+        exporter = InMemoryLogExporter()
+        processor = BatchLogRecordProcessor(exporter)
+        weak_ref = weakref.ref(processor)
+        processor.shutdown()
+
+        # When the processor is garbage collected
+        del processor
+        gc.collect()
+
+        # Then the reference to the processor should no longer exist
+        self.assertIsNone(
+            weak_ref(),
+            "The BatchLogRecordProcessor object created by this test wasn't garbage collected",
+        )
 
 
 class TestConsoleLogExporter(unittest.TestCase):

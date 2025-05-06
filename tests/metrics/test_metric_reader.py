@@ -12,13 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# pylint: disable=protected-access
+
 from typing import Dict, Iterable
 from unittest import TestCase
 from unittest.mock import patch
 
 from opentelemetry.sdk.metrics import Counter, Histogram, ObservableGauge
+from opentelemetry.sdk.metrics import _Gauge as _SDKGauge
 from opentelemetry.sdk.metrics._internal.instrument import (
     _Counter,
+    _Gauge,
     _Histogram,
     _ObservableCounter,
     _ObservableGauge,
@@ -39,6 +43,7 @@ from opentelemetry.sdk.metrics.view import (
 _expected_keys = [
     _Counter,
     _UpDownCounter,
+    _Gauge,
     _Histogram,
     _ObservableCounter,
     _ObservableUpDownCounter,
@@ -59,7 +64,7 @@ class DummyMetricReader(MetricReader):
 
     def _receive_metrics(
         self,
-        metrics: Iterable[Metric],
+        metrics_data: Iterable[Metric],
         timeout_millis: float = 10_000,
         **kwargs,
     ) -> None:
@@ -71,11 +76,11 @@ class DummyMetricReader(MetricReader):
 
 class TestMetricReader(TestCase):
     def test_configure_temporality(self):
-
         dummy_metric_reader = DummyMetricReader(
             preferred_temporality={
                 Histogram: AggregationTemporality.DELTA,
                 ObservableGauge: AggregationTemporality.DELTA,
+                _SDKGauge: AggregationTemporality.DELTA,
             }
         )
 
@@ -114,6 +119,11 @@ class TestMetricReader(TestCase):
             AggregationTemporality.DELTA,
         )
 
+        self.assertEqual(
+            dummy_metric_reader._instrument_class_temporality[_Gauge],
+            AggregationTemporality.DELTA,
+        )
+
     def test_configure_aggregation(self):
         dummy_metric_reader = DummyMetricReader()
         self.assertEqual(
@@ -137,8 +147,8 @@ class TestMetricReader(TestCase):
             LastValueAggregation,
         )
 
+    # pylint: disable=no-self-use
     def test_force_flush(self):
-
         with patch.object(DummyMetricReader, "collect") as mock_collect:
             DummyMetricReader().force_flush(timeout_millis=10)
             mock_collect.assert_called_with(timeout_millis=10)

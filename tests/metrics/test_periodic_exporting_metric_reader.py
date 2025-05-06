@@ -12,7 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# pylint: disable=protected-access,invalid-name,no-self-use
+
+import gc
 import math
+import weakref
+from logging import WARNING
 from time import sleep, time_ns
 from typing import Optional, Sequence
 from unittest.mock import Mock
@@ -52,12 +57,12 @@ class FakeMetricsExporter(MetricExporter):
 
     def export(
         self,
-        metrics: Sequence[Metric],
+        metrics_data: Sequence[Metric],
         timeout_millis: float = 10_000,
         **kwargs,
     ) -> MetricExportResult:
         sleep(self.wait)
-        self.metrics.extend(metrics)
+        self.metrics.extend(metrics_data)
         return True
 
     def shutdown(self, timeout_millis: float = 30_000, **kwargs) -> None:
@@ -82,6 +87,7 @@ class ExceptionAtCollectionPeriodicExportingMetricReader(
         )
         self._collect_exception = exception
 
+    # pylint: disable=overridden-final-method
     def collect(self, timeout_millis: float = 10_000) -> None:
         raise self._collect_exception
 
@@ -127,12 +133,12 @@ class TestPeriodicExportingMetricReader(ConcurrencyTestBase):
         pmr = PeriodicExportingMetricReader(FakeMetricsExporter())
         self.assertEqual(pmr._export_interval_millis, 60000)
         self.assertEqual(pmr._export_timeout_millis, 30000)
-        pmr.shutdown()
+        with self.assertLogs(level=WARNING):
+            pmr.shutdown()
 
     def _create_periodic_reader(
         self, metrics, exporter, collect_wait=0, interval=60000, timeout=30000
     ):
-
         pmr = PeriodicExportingMetricReader(
             exporter,
             export_interval_millis=interval,
@@ -212,8 +218,9 @@ class TestPeriodicExportingMetricReader(ConcurrencyTestBase):
         pmr = self._create_periodic_reader([], FakeMetricsExporter())
         with self.assertLogs(level="WARNING") as w:
             self.run_with_many_threads(pmr.shutdown)
-            self.assertTrue("Can't shutdown multiple times", w.output[0])
-        pmr.shutdown()
+        self.assertTrue("Can't shutdown multiple times" in w.output[0])
+        with self.assertLogs(level="WARNING") as w:
+            pmr.shutdown()
 
     def test_exporter_temporality_preference(self):
         exporter = FakeMetricsExporter(
@@ -252,3 +259,24 @@ class TestPeriodicExportingMetricReader(ConcurrencyTestBase):
         sleep(0.1)
         self.assertTrue(pmr._daemon_thread.is_alive())
         pmr.shutdown()
+
+    def test_metric_exporer_gc(self):
+        # Given a PeriodicExportingMetricReader
+        exporter = FakeMetricsExporter(
+            preferred_aggregation={
+                Counter: LastValueAggregation(),
+            },
+        )
+        processor = PeriodicExportingMetricReader(exporter)
+        weak_ref = weakref.ref(processor)
+        processor.shutdown()
+
+        # When we garbage collect the reader
+        del processor
+        gc.collect()
+
+        # Then the reference to the reader should no longer exist
+        self.assertIsNone(
+            weak_ref(),
+            "The PeriodicExportingMetricReader object created by this test wasn't garbage collected",
+        )

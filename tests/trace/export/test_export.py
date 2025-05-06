@@ -12,11 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import gc
 import multiprocessing
 import os
 import threading
 import time
 import unittest
+import weakref
 from concurrent.futures import ThreadPoolExecutor
 from logging import WARNING
 from platform import python_implementation, system
@@ -33,7 +35,9 @@ from opentelemetry.sdk.environment_variables import (
     OTEL_BSP_MAX_QUEUE_SIZE,
     OTEL_BSP_SCHEDULE_DELAY,
 )
+from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import export
+from opentelemetry.sdk.trace.export import logger
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
     InMemorySpanExporter,
 )
@@ -150,7 +154,7 @@ class TestSimpleSpanProcessor(unittest.TestCase):
         self.assertListEqual([], spans_names_list)
 
 
-def _create_start_and_end_span(name, span_processor):
+def _create_start_and_end_span(name, span_processor, resource):
     span = trace._Span(
         name,
         trace_api.SpanContext(
@@ -160,6 +164,7 @@ def _create_start_and_end_span(name, span_processor):
             trace_flags=trace_api.TraceFlags(trace_api.TraceFlags.SAMPLED),
         ),
         span_processor=span_processor,
+        resource=resource,
     )
     span.start()
     span.end()
@@ -176,7 +181,6 @@ class TestBatchSpanProcessor(ConcurrencyTestBase):
         },
     )
     def test_args_env_var(self):
-
         batch_span_processor = export.BatchSpanProcessor(
             MySpanExporter(destination=[])
         )
@@ -187,7 +191,6 @@ class TestBatchSpanProcessor(ConcurrencyTestBase):
         self.assertEqual(batch_span_processor.export_timeout_millis, 4)
 
     def test_args_env_var_defaults(self):
-
         batch_span_processor = export.BatchSpanProcessor(
             MySpanExporter(destination=[])
         )
@@ -207,10 +210,11 @@ class TestBatchSpanProcessor(ConcurrencyTestBase):
         },
     )
     def test_args_env_var_value_error(self):
-
+        logger.disabled = True
         batch_span_processor = export.BatchSpanProcessor(
             MySpanExporter(destination=[])
         )
+        logger.disabled = False
 
         self.assertEqual(batch_span_processor.max_queue_size, 2048)
         self.assertEqual(batch_span_processor.schedule_delay_millis, 5000)
@@ -242,8 +246,9 @@ class TestBatchSpanProcessor(ConcurrencyTestBase):
 
         span_names = ["xxx", "bar", "foo"]
 
+        resource = Resource.create({})
         for name in span_names:
-            _create_start_and_end_span(name, span_processor)
+            _create_start_and_end_span(name, span_processor, resource)
 
         span_processor.shutdown()
         self.assertTrue(my_exporter.is_shutdown)
@@ -261,15 +266,16 @@ class TestBatchSpanProcessor(ConcurrencyTestBase):
         span_names0 = ["xxx", "bar", "foo"]
         span_names1 = ["yyy", "baz", "fox"]
 
+        resource = Resource.create({})
         for name in span_names0:
-            _create_start_and_end_span(name, span_processor)
+            _create_start_and_end_span(name, span_processor, resource)
 
         self.assertTrue(span_processor.force_flush())
         self.assertListEqual(span_names0, spans_names_list)
 
         # create some more spans to check that span processor still works
         for name in span_names1:
-            _create_start_and_end_span(name, span_processor)
+            _create_start_and_end_span(name, span_processor, resource)
 
         self.assertTrue(span_processor.force_flush())
         self.assertListEqual(span_names0 + span_names1, spans_names_list)
@@ -295,10 +301,12 @@ class TestBatchSpanProcessor(ConcurrencyTestBase):
             my_exporter, max_queue_size=512, max_export_batch_size=128
         )
 
+        resource = Resource.create({})
+
         def create_spans_and_flush(tno: int):
             for span_idx in range(num_spans):
                 _create_start_and_end_span(
-                    f"Span {tno}-{span_idx}", span_processor
+                    f"Span {tno}-{span_idx}", span_processor, resource
                 )
             self.assertTrue(span_processor.force_flush())
 
@@ -320,7 +328,8 @@ class TestBatchSpanProcessor(ConcurrencyTestBase):
         )
         span_processor = export.BatchSpanProcessor(my_exporter)
 
-        _create_start_and_end_span("foo", span_processor)
+        resource = Resource.create({})
+        _create_start_and_end_span("foo", span_processor, resource)
 
         # check that the timeout is not meet
         with self.assertLogs(level=WARNING):
@@ -338,8 +347,9 @@ class TestBatchSpanProcessor(ConcurrencyTestBase):
             my_exporter, max_queue_size=512, max_export_batch_size=128
         )
 
+        resource = Resource.create({})
         for _ in range(512):
-            _create_start_and_end_span("foo", span_processor)
+            _create_start_and_end_span("foo", span_processor, resource)
 
         time.sleep(1)
         self.assertTrue(span_processor.force_flush())
@@ -360,9 +370,10 @@ class TestBatchSpanProcessor(ConcurrencyTestBase):
             schedule_delay_millis=100,
         )
 
+        resource = Resource.create({})
         for _ in range(4):
             for _ in range(256):
-                _create_start_and_end_span("foo", span_processor)
+                _create_start_and_end_span("foo", span_processor, resource)
 
             time.sleep(0.1)  # give some time for the exporter to upload spans
 
@@ -449,6 +460,10 @@ class TestBatchSpanProcessor(ConcurrencyTestBase):
 
         span_processor.shutdown()
 
+    @mark.skipif(
+        python_implementation() == "PyPy" or system() == "Windows",
+        reason="This test randomly fails with huge delta in Windows or PyPy",
+    )
     def test_batch_span_processor_scheduled_delay(self):
         """Test that spans are exported each schedule_delay_millis"""
         spans_names_list = []
@@ -464,12 +479,13 @@ class TestBatchSpanProcessor(ConcurrencyTestBase):
         )
 
         # create single span
-        _create_start_and_end_span("foo", span_processor)
+        resource = Resource.create({})
+        _create_start_and_end_span("foo", span_processor, resource)
 
         self.assertTrue(export_event.wait(2))
         export_time = time.time()
         self.assertEqual(len(spans_names_list), 1)
-        self.assertGreaterEqual((export_time - start_time) * 1e3, 500)
+        self.assertAlmostEqual((export_time - start_time) * 1e3, 500, delta=25)
 
         span_processor.shutdown()
 
@@ -494,12 +510,13 @@ class TestBatchSpanProcessor(ConcurrencyTestBase):
         )
 
         with mock.patch.object(span_processor.condition, "wait") as mock_wait:
-            _create_start_and_end_span("foo", span_processor)
+            resource = Resource.create({})
+            _create_start_and_end_span("foo", span_processor, resource)
             self.assertTrue(export_event.wait(2))
 
             # give some time for exporter to loop
             # since wait is mocked it should return immediately
-            time.sleep(0.05)
+            time.sleep(0.1)
             mock_wait_calls = list(mock_wait.mock_calls)
 
             # find the index of the call that processed the singular span
@@ -568,6 +585,23 @@ class TestBatchSpanProcessor(ConcurrencyTestBase):
             None,
             max_queue_size=256,
             max_export_batch_size=512,
+        )
+
+    def test_batch_span_processor_gc(self):
+        # Given a BatchSpanProcessor
+        exporter = MySpanExporter(destination=[])
+        processor = export.BatchSpanProcessor(exporter)
+        weak_ref = weakref.ref(processor)
+        processor.shutdown()
+
+        # When the processor is garbage collected
+        del processor
+        gc.collect()
+
+        # Then the reference to the processor should no longer exist
+        self.assertIsNone(
+            weak_ref(),
+            "The BatchSpanProcessor object created by this test wasn't garbage collected",
         )
 
 
