@@ -12,6 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+OTEL_SDK_DISABLED = "OTEL_SDK_DISABLED"
+"""
+.. envvar:: OTEL_SDK_DISABLED
+
+The :envvar:`OTEL_SDK_DISABLED` environment variable disables the SDK for all signals
+Default: "false"
+"""
+
 OTEL_RESOURCE_ATTRIBUTES = "OTEL_RESOURCE_ATTRIBUTES"
 """
 .. envvar:: OTEL_RESOURCE_ATTRIBUTES
@@ -262,7 +270,7 @@ OTEL_EXPORTER_OTLP_PROTOCOL = "OTEL_EXPORTER_OTLP_PROTOCOL"
 """
 .. envvar:: OTEL_EXPORTER_OTLP_PROTOCOL
 
-The :envvar:`OTEL_EXPORTER_OTLP_PROTOCOL` represents the the transport protocol for the
+The :envvar:`OTEL_EXPORTER_OTLP_PROTOCOL` represents the transport protocol for the
 OTLP exporter.
 """
 
@@ -270,21 +278,21 @@ OTEL_EXPORTER_OTLP_TRACES_PROTOCOL = "OTEL_EXPORTER_OTLP_TRACES_PROTOCOL"
 """
 .. envvar:: OTEL_EXPORTER_OTLP_TRACES_PROTOCOL
 
-The :envvar:`OTEL_EXPORTER_OTLP_TRACES_PROTOCOL` represents the the transport protocol for spans.
+The :envvar:`OTEL_EXPORTER_OTLP_TRACES_PROTOCOL` represents the transport protocol for spans.
 """
 
 OTEL_EXPORTER_OTLP_METRICS_PROTOCOL = "OTEL_EXPORTER_OTLP_METRICS_PROTOCOL"
 """
 .. envvar:: OTEL_EXPORTER_OTLP_METRICS_PROTOCOL
 
-The :envvar:`OTEL_EXPORTER_OTLP_TRACES_PROTOCOL` represents the the transport protocol for metrics.
+The :envvar:`OTEL_EXPORTER_OTLP_METRICS_PROTOCOL` represents the transport protocol for metrics.
 """
 
 OTEL_EXPORTER_OTLP_LOGS_PROTOCOL = "OTEL_EXPORTER_OTLP_LOGS_PROTOCOL"
 """
 .. envvar:: OTEL_EXPORTER_OTLP_LOGS_PROTOCOL
 
-The :envvar:`OTEL_EXPORTER_OTLP_TRACES_PROTOCOL` represents the the transport protocol for logs.
+The :envvar:`OTEL_EXPORTER_OTLP_LOGS_PROTOCOL` represents the transport protocol for logs.
 """
 
 OTEL_EXPORTER_OTLP_CERTIFICATE = "OTEL_EXPORTER_OTLP_CERTIFICATE"
@@ -403,6 +411,76 @@ The :envvar:`OTEL_EXPORTER_OTLP_METRICS_CERTIFICATE` stores the path to the cert
 TLS credentials of gRPC client for metrics. Should only be used for a secure connection for exporting metrics.
 """
 
+OTEL_EXPORTER_OTLP_CLIENT_KEY = "OTEL_EXPORTER_OTLP_CLIENT_KEY"
+"""
+.. envvar:: OTEL_EXPORTER_OTLP_CLIENT_KEY
+
+The :envvar:`OTEL_EXPORTER_OTLP_CLIENT_KEY` stores the path to the client private key to use
+in mTLS communication in PEM format.
+"""
+
+OTEL_EXPORTER_OTLP_TRACES_CLIENT_KEY = "OTEL_EXPORTER_OTLP_TRACES_CLIENT_KEY"
+"""
+.. envvar:: OTEL_EXPORTER_OTLP_TRACES_CLIENT_KEY
+
+The :envvar:`OTEL_EXPORTER_OTLP_TRACES_CLIENT_KEY` stores the path to the client private key to use
+in mTLS communication in PEM format for traces.
+"""
+
+OTEL_EXPORTER_OTLP_METRICS_CLIENT_KEY = "OTEL_EXPORTER_OTLP_METRICS_CLIENT_KEY"
+"""
+.. envvar:: OTEL_EXPORTER_OTLP_METRICS_CLIENT_KEY
+
+The :envvar:`OTEL_EXPORTER_OTLP_METRICS_CLIENT_KEY` stores the path to the client private key to use
+in mTLS communication in PEM format for metrics.
+"""
+
+OTEL_EXPORTER_OTLP_LOGS_CLIENT_KEY = "OTEL_EXPORTER_OTLP_LOGS_CLIENT_KEY"
+"""
+.. envvar:: OTEL_EXPORTER_OTLP_LOGS_CLIENT_KEY
+
+The :envvar:`OTEL_EXPORTER_OTLP_LOGS_CLIENT_KEY` stores the path to the client private key to use
+in mTLS communication in PEM format for logs.
+"""
+
+OTEL_EXPORTER_OTLP_CLIENT_CERTIFICATE = "OTEL_EXPORTER_OTLP_CLIENT_CERTIFICATE"
+"""
+.. envvar:: OTEL_EXPORTER_OTLP_CLIENT_CERTIFICATE
+
+The :envvar:`OTEL_EXPORTER_OTLP_CLIENT_CERTIFICATE` stores the path to the client certificate/chain trust for
+clients private key to use in mTLS communication in PEM format.
+"""
+
+OTEL_EXPORTER_OTLP_TRACES_CLIENT_CERTIFICATE = (
+    "OTEL_EXPORTER_OTLP_TRACES_CLIENT_CERTIFICATE"
+)
+"""
+.. envvar:: OTEL_EXPORTER_OTLP_TRACES_CLIENT_CERTIFICATE
+
+The :envvar:`OTEL_EXPORTER_OTLP_TRACES_CLIENT_CERTIFICATE` stores the path to the client certificate/chain trust for
+clients private key to use in mTLS communication in PEM format for traces.
+"""
+
+OTEL_EXPORTER_OTLP_METRICS_CLIENT_CERTIFICATE = (
+    "OTEL_EXPORTER_OTLP_METRICS_CLIENT_CERTIFICATE"
+)
+"""
+.. envvar:: OTEL_EXPORTER_OTLP_METRICS_CLIENT_CERTIFICATE
+
+The :envvar:`OTEL_EXPORTER_OTLP_METRICS_CLIENT_CERTIFICATE` stores the path to the client certificate/chain trust for
+clients private key to use in mTLS communication in PEM format for metrics.
+"""
+
+OTEL_EXPORTER_OTLP_LOGS_CLIENT_CERTIFICATE = (
+    "OTEL_EXPORTER_OTLP_LOGS_CLIENT_CERTIFICATE"
+)
+"""
+.. envvar:: OTEL_EXPORTER_OTLP_LOGS_CLIENT_CERTIFICATE
+
+The :envvar:`OTEL_EXPORTER_OTLP_LOGS_CLIENT_CERTIFICATE` stores the path to the client certificate/chain trust for
+clients private key to use in mTLS communication in PEM format for logs.
+"""
+
 OTEL_EXPORTER_OTLP_TRACES_HEADERS = "OTEL_EXPORTER_OTLP_TRACES_HEADERS"
 """
 .. envvar:: OTEL_EXPORTER_OTLP_TRACES_HEADERS
@@ -483,27 +561,8 @@ OTEL_EXPORTER_OTLP_LOGS_INSECURE = "OTEL_EXPORTER_OTLP_LOGS_INSECURE"
 .. envvar:: OTEL_EXPORTER_OTLP_LOGS_INSECURE
 
 The :envvar:`OTEL_EXPORTER_OTLP_LOGS_INSECURE` represents whether to enable client transport security
-for gRPC requests for metrics. A scheme of https takes precedence over the this configuration setting.
+for gRPC requests for logs. A scheme of https takes precedence over the this configuration setting.
 Default: False
-"""
-
-OTEL_EXPORTER_OTLP_METRICS_ENDPOINT = "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT"
-"""
-.. envvar:: OTEL_EXPORTER_OTLP_METRICS_ENDPOINT
-
-The :envvar:`OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` target to which the metric exporter is going to send spans.
-The endpoint MUST be a valid URL host, and MAY contain a scheme (http or https), port and path.
-A scheme of https indicates a secure connection and takes precedence over this configuration setting.
-"""
-
-OTEL_EXPORTER_OTLP_METRICS_CERTIFICATE = (
-    "OTEL_EXPORTER_OTLP_METRICS_CERTIFICATE"
-)
-"""
-.. envvar:: OTEL_EXPORTER_OTLP_METRICS_CERTIFICATE
-
-The :envvar:`OTEL_EXPORTER_OTLP_METRICS_CERTIFICATE` stores the path to the certificate file for
-TLS credentials of gRPC client for traces. Should only be used for a secure connection for tracing.
 """
 
 OTEL_EXPORTER_OTLP_LOGS_CERTIFICATE = "OTEL_EXPORTER_OTLP_LOGS_CERTIFICATE"
@@ -511,23 +570,7 @@ OTEL_EXPORTER_OTLP_LOGS_CERTIFICATE = "OTEL_EXPORTER_OTLP_LOGS_CERTIFICATE"
 .. envvar:: OTEL_EXPORTER_OTLP_LOGS_CERTIFICATE
 
 The :envvar:`OTEL_EXPORTER_OTLP_LOGS_CERTIFICATE` stores the path to the certificate file for
-TLS credentials of gRPC client for traces. Should only be used for a secure connection for tracing.
-"""
-
-OTEL_EXPORTER_OTLP_METRICS_HEADERS = "OTEL_EXPORTER_OTLP_METRICS_HEADERS"
-"""
-.. envvar:: OTEL_EXPORTER_OTLP_METRICS_HEADERS
-
-The :envvar:`OTEL_EXPORTER_OTLP_METRICS_HEADERS` contains the key-value pairs to be used as headers for metrics
-associated with gRPC or HTTP requests.
-"""
-
-OTEL_EXPORTER_OTLP_METRICS_TIMEOUT = "OTEL_EXPORTER_OTLP_METRICS_TIMEOUT"
-"""
-.. envvar:: OTEL_EXPORTER_OTLP_METRICS_TIMEOUT
-
-The :envvar:`OTEL_EXPORTER_OTLP_METRICS_TIMEOUT` is the maximum time the OTLP exporter will
-wait for each batch export for metrics.
+TLS credentials of gRPC client for logs. Should only be used for a secure connection for logs.
 """
 
 OTEL_EXPORTER_OTLP_LOGS_TIMEOUT = "OTEL_EXPORTER_OTLP_LOGS_TIMEOUT"
@@ -536,16 +579,6 @@ OTEL_EXPORTER_OTLP_LOGS_TIMEOUT = "OTEL_EXPORTER_OTLP_LOGS_TIMEOUT"
 
 The :envvar:`OTEL_EXPORTER_OTLP_LOGS_TIMEOUT` is the maximum time the OTLP exporter will
 wait for each batch export for logs.
-"""
-
-OTEL_EXPORTER_OTLP_METRICS_COMPRESSION = (
-    "OTEL_EXPORTER_OTLP_METRICS_COMPRESSION"
-)
-"""
-.. envvar:: OTEL_EXPORTER_OTLP_METRICS_COMPRESSION
-
-Same as :envvar:`OTEL_EXPORTER_OTLP_COMPRESSION` but only for the metric
-exporter. If both are present, this takes higher precedence.
 """
 
 OTEL_EXPORTER_JAEGER_CERTIFICATE = "OTEL_EXPORTER_JAEGER_CERTIFICATE"
@@ -591,7 +624,7 @@ _OTEL_PYTHON_LOGGING_AUTO_INSTRUMENTATION_ENABLED = (
 .. envvar:: OTEL_PYTHON_LOGGING_AUTO_INSTRUMENTATION_ENABLED
 
 The :envvar:`OTEL_PYTHON_LOGGING_AUTO_INSTRUMENTATION_ENABLED` environment variable allows users to
-enable/disable the logging SDK auto instrumentation.
+enable/disable the auto instrumentation for the python logging module.
 Default: False
 
 Note: Logs SDK and its related settings are experimental.
@@ -636,13 +669,6 @@ OTEL_METRIC_EXPORT_TIMEOUT = "OTEL_METRIC_EXPORT_TIMEOUT"
 The :envvar:`OTEL_METRIC_EXPORT_TIMEOUT` is the maximum allowed time (in milliseconds) to export data.
 """
 
-OTEL_EXPORTER_OTLP_METRICS_CLIENT_KEY = "OTEL_EXPORTER_OTLP_METRICS_CLIENT_KEY"
-"""
-.. envvar:: OTEL_EXPORTER_OTLP_METRICS_CLIENT_KEY
-
-The :envvar:`OTEL_EXPORTER_OTLP_METRICS_CLIENT_KEY` is the clients private key to use in mTLS communication in PEM format.
-"""
-
 OTEL_METRICS_EXEMPLAR_FILTER = "OTEL_METRICS_EXEMPLAR_FILTER"
 """
 .. envvar:: OTEL_METRICS_EXEMPLAR_FILTER
@@ -659,22 +685,37 @@ OTEL_EXPORTER_OTLP_METRICS_DEFAULT_HISTOGRAM_AGGREGATION = (
 The :envvar:`OTEL_EXPORTER_OTLP_METRICS_DEFAULT_HISTOGRAM_AGGREGATION` is the default aggregation to use for histogram instruments.
 """
 
-OTEL_EXPORTER_OTLP_METRICS_CLIENT_CERTIFICATE = (
-    "OTEL_EXPORTER_OTLP_METRICS_CLIENT_CERTIFICATE"
-)
-"""
-.. envvar:: OTEL_EXPORTER_OTLP_METRICS_CLIENT_CERTIFICATE
-
-The :envvar:`OTEL_EXPORTER_OTLP_METRICS_CLIENT_CERTIFICATE` is the client certificate/chain trust for clients private key to use in mTLS communication in PEM format.
-"""
-
 OTEL_EXPERIMENTAL_RESOURCE_DETECTORS = "OTEL_EXPERIMENTAL_RESOURCE_DETECTORS"
 """
 .. envvar:: OTEL_EXPERIMENTAL_RESOURCE_DETECTORS
 
 The :envvar:`OTEL_EXPERIMENTAL_RESOURCE_DETECTORS` is a comma-separated string
 of names of resource detectors. These names must be the same as the names of
-entry points for the `opentelemetry_resource_detector` entry point. This is an
+entry points for the ```opentelemetry_resource_detector``` entry point. This is an
 experimental feature and the name of this variable and its behavior can change
 in a non-backwards compatible way.
+"""
+
+OTEL_EXPORTER_PROMETHEUS_HOST = "OTEL_EXPORTER_PROMETHEUS_HOST"
+"""
+.. envvar:: OTEL_EXPORTER_PROMETHEUS_HOST
+
+The :envvar:`OTEL_EXPORTER_PROMETHEUS_HOST` environment variable configures the host used by
+the Prometheus exporter.
+Default: "localhost"
+
+This is an experimental environment variable and the name of this variable and its behavior can
+change in a non-backwards compatible way.
+"""
+
+OTEL_EXPORTER_PROMETHEUS_PORT = "OTEL_EXPORTER_PROMETHEUS_PORT"
+"""
+.. envvar:: OTEL_EXPORTER_PROMETHEUS_PORT
+
+The :envvar:`OTEL_EXPORTER_PROMETHEUS_PORT` environment variable configures the port used by
+the Prometheus exporter.
+Default: 9464
+
+This is an experimental environment variable and the name of this variable and its behavior can
+change in a non-backwards compatible way.
 """

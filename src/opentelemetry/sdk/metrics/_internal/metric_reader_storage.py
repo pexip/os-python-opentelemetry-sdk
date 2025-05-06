@@ -15,7 +15,7 @@
 from logging import getLogger
 from threading import RLock
 from time import time_ns
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from opentelemetry.metrics import (
     Asynchronous,
@@ -107,19 +107,23 @@ class MetricReaderStorage:
                         ),
                     )
                 )
-            self._instrument_view_instrument_matches[
-                instrument
-            ] = view_instrument_matches
+            self._instrument_view_instrument_matches[instrument] = (
+                view_instrument_matches
+            )
 
             return view_instrument_matches
 
-    def consume_measurement(self, measurement: Measurement) -> None:
+    def consume_measurement(
+        self, measurement: Measurement, should_sample_exemplar: bool = True
+    ) -> None:
         for view_instrument_match in self._get_or_init_view_instrument_match(
             measurement.instrument
         ):
-            view_instrument_match.consume_measurement(measurement)
+            view_instrument_match.consume_measurement(
+                measurement, should_sample_exemplar
+            )
 
-    def collect(self) -> MetricsData:
+    def collect(self) -> Optional[MetricsData]:
         # Use a list instead of yielding to prevent a slow reader from holding
         # SDK locks
 
@@ -135,10 +139,9 @@ class MetricReaderStorage:
         collection_start_nanos = time_ns()
 
         with self._lock:
-
-            instrumentation_scope_scope_metrics: (
-                Dict[InstrumentationScope, ScopeMetrics]
-            ) = {}
+            instrumentation_scope_scope_metrics: Dict[
+                InstrumentationScope, ScopeMetrics
+            ] = {}
 
             for (
                 instrument,
@@ -151,6 +154,12 @@ class MetricReaderStorage:
                 metrics: List[Metric] = []
 
                 for view_instrument_match in view_instrument_matches:
+                    data_points = view_instrument_match.collect(
+                        aggregation_temporality, collection_start_nanos
+                    )
+
+                    if data_points is None:
+                        continue
 
                     if isinstance(
                         # pylint: disable=protected-access
@@ -159,9 +168,7 @@ class MetricReaderStorage:
                     ):
                         data = Sum(
                             aggregation_temporality=aggregation_temporality,
-                            data_points=view_instrument_match.collect(
-                                aggregation_temporality, collection_start_nanos
-                            ),
+                            data_points=data_points,
                             is_monotonic=isinstance(
                                 instrument, (Counter, ObservableCounter)
                             ),
@@ -171,20 +178,14 @@ class MetricReaderStorage:
                         view_instrument_match._aggregation,
                         _LastValueAggregation,
                     ):
-                        data = Gauge(
-                            data_points=view_instrument_match.collect(
-                                aggregation_temporality, collection_start_nanos
-                            )
-                        )
+                        data = Gauge(data_points=data_points)
                     elif isinstance(
                         # pylint: disable=protected-access
                         view_instrument_match._aggregation,
                         _ExplicitBucketHistogramAggregation,
                     ):
                         data = Histogram(
-                            data_points=view_instrument_match.collect(
-                                aggregation_temporality, collection_start_nanos
-                            ),
+                            data_points=data_points,
                             aggregation_temporality=aggregation_temporality,
                         )
                     elif isinstance(
@@ -200,15 +201,14 @@ class MetricReaderStorage:
                         _ExponentialBucketHistogramAggregation,
                     ):
                         data = ExponentialHistogram(
-                            data_points=view_instrument_match.collect(
-                                aggregation_temporality, collection_start_nanos
-                            ),
+                            data_points=data_points,
                             aggregation_temporality=aggregation_temporality,
                         )
 
                     metrics.append(
                         Metric(
                             # pylint: disable=protected-access
+                            # pylint: disable=possibly-used-before-assignment
                             name=view_instrument_match._name,
                             description=view_instrument_match._description,
                             unit=view_instrument_match._instrument.unit,
@@ -216,32 +216,36 @@ class MetricReaderStorage:
                         )
                     )
 
-                if instrument.instrumentation_scope not in (
-                    instrumentation_scope_scope_metrics
-                ):
-                    instrumentation_scope_scope_metrics[
-                        instrument.instrumentation_scope
-                    ] = ScopeMetrics(
-                        scope=instrument.instrumentation_scope,
-                        metrics=metrics,
-                        schema_url=instrument.instrumentation_scope.schema_url,
-                    )
-                else:
-                    instrumentation_scope_scope_metrics[
-                        instrument.instrumentation_scope
-                    ].metrics.extend(metrics)
+                if metrics:
+                    if instrument.instrumentation_scope not in (
+                        instrumentation_scope_scope_metrics
+                    ):
+                        instrumentation_scope_scope_metrics[
+                            instrument.instrumentation_scope
+                        ] = ScopeMetrics(
+                            scope=instrument.instrumentation_scope,
+                            metrics=metrics,
+                            schema_url=instrument.instrumentation_scope.schema_url,
+                        )
+                    else:
+                        instrumentation_scope_scope_metrics[
+                            instrument.instrumentation_scope
+                        ].metrics.extend(metrics)
 
-        return MetricsData(
-            resource_metrics=[
-                ResourceMetrics(
-                    resource=self._sdk_config.resource,
-                    scope_metrics=list(
-                        instrumentation_scope_scope_metrics.values()
-                    ),
-                    schema_url=self._sdk_config.resource.schema_url,
+            if instrumentation_scope_scope_metrics:
+                return MetricsData(
+                    resource_metrics=[
+                        ResourceMetrics(
+                            resource=self._sdk_config.resource,
+                            scope_metrics=list(
+                                instrumentation_scope_scope_metrics.values()
+                            ),
+                            schema_url=self._sdk_config.resource.schema_url,
+                        )
+                    ]
                 )
-            ]
-        )
+
+            return None
 
     def _handle_view_instrument_match(
         self,
@@ -273,7 +277,6 @@ class MetricReaderStorage:
                     if existing_view_instrument_match.conflicts(
                         new_view_instrument_match
                     ):
-
                         _logger.warning(
                             "Views %s and %s will cause conflicting "
                             "metrics identities",

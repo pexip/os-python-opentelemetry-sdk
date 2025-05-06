@@ -11,12 +11,12 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
-# pylint: disable=protected-access
-
+import os
+import sys
 import unittest
 import uuid
-from logging import ERROR
+from concurrent.futures import TimeoutError
+from logging import ERROR, WARNING
 from os import environ
 from unittest.mock import Mock, patch
 from urllib import parse
@@ -28,9 +28,20 @@ from opentelemetry.sdk.resources import (
     _DEFAULT_RESOURCE,
     _EMPTY_RESOURCE,
     _OPENTELEMETRY_SDK_VERSION,
+    HOST_ARCH,
+    HOST_NAME,
+    OS_TYPE,
+    OS_VERSION,
     OTEL_RESOURCE_ATTRIBUTES,
     OTEL_SERVICE_NAME,
+    PROCESS_COMMAND,
+    PROCESS_COMMAND_ARGS,
+    PROCESS_COMMAND_LINE,
     PROCESS_EXECUTABLE_NAME,
+    PROCESS_EXECUTABLE_PATH,
+    PROCESS_OWNER,
+    PROCESS_PARENT_PID,
+    PROCESS_PID,
     PROCESS_RUNTIME_DESCRIPTION,
     PROCESS_RUNTIME_NAME,
     PROCESS_RUNTIME_VERSION,
@@ -38,12 +49,19 @@ from opentelemetry.sdk.resources import (
     TELEMETRY_SDK_LANGUAGE,
     TELEMETRY_SDK_NAME,
     TELEMETRY_SDK_VERSION,
+    OsResourceDetector,
     OTELResourceDetector,
     ProcessResourceDetector,
     Resource,
     ResourceDetector,
+    _HostResourceDetector,
     get_aggregated_resources,
 )
+
+try:
+    import psutil
+except ImportError:
+    psutil = None
 
 
 class TestResources(unittest.TestCase):
@@ -221,16 +239,19 @@ class TestResources(unittest.TestCase):
         )
 
     def test_invalid_resource_attribute_values(self):
-        resource = Resource(
-            {
-                SERVICE_NAME: "test",
-                "non-primitive-data-type": {},
-                "invalid-byte-type-attribute": b"\xd8\xe1\xb7\xeb\xa8\xe5 \xd2\xb7\xe1",
-                "": "empty-key-value",
-                None: "null-key-value",
-                "another-non-primitive": uuid.uuid4(),
-            }
-        )
+        with self.assertLogs(level=WARNING):
+            resource = Resource(
+                {
+                    SERVICE_NAME: "test",
+                    "non-primitive-data-type": {},
+                    "invalid-byte-type-attribute": (
+                        b"\xd8\xe1\xb7\xeb\xa8\xe5 \xd2\xb7\xe1"
+                    ),
+                    "": "empty-key-value",
+                    None: "null-key-value",
+                    "another-non-primitive": uuid.uuid4(),
+                }
+            )
         self.assertEqual(
             resource.attributes,
             {
@@ -390,12 +411,13 @@ class TestResources(unittest.TestCase):
         resource_detector = Mock(spec=ResourceDetector)
         resource_detector.detect.side_effect = Exception()
         resource_detector.raise_on_error = False
-        self.assertEqual(
-            get_aggregated_resources([resource_detector]),
-            _DEFAULT_RESOURCE.merge(
-                Resource({SERVICE_NAME: "unknown_service"}, "")
-            ),
-        )
+        with self.assertLogs(level=WARNING):
+            self.assertEqual(
+                get_aggregated_resources([resource_detector]),
+                _DEFAULT_RESOURCE.merge(
+                    Resource({SERVICE_NAME: "unknown_service"}, "")
+                ),
+            )
 
     def test_resource_detector_raise_error(self):
         resource_detector = Mock(spec=ResourceDetector)
@@ -403,6 +425,23 @@ class TestResources(unittest.TestCase):
         resource_detector.raise_on_error = True
         self.assertRaises(
             Exception, get_aggregated_resources, [resource_detector]
+        )
+
+    @patch("opentelemetry.sdk.resources.logger")
+    def test_resource_detector_timeout(self, mock_logger):
+        resource_detector = Mock(spec=ResourceDetector)
+        resource_detector.detect.side_effect = TimeoutError()
+        resource_detector.raise_on_error = False
+        self.assertEqual(
+            get_aggregated_resources([resource_detector]),
+            _DEFAULT_RESOURCE.merge(
+                Resource({SERVICE_NAME: "unknown_service"}, "")
+            ),
+        )
+        mock_logger.warning.assert_called_with(
+            "Detector %s took longer than %s seconds, skipping",
+            resource_detector,
+            5,
         )
 
     @patch.dict(
@@ -470,16 +509,17 @@ class TestOTELResourceDetector(unittest.TestCase):
     def test_invalid_key_value_pairs(self):
         detector = OTELResourceDetector()
         environ[OTEL_RESOURCE_ATTRIBUTES] = "k=v,k2=v2,invalid,,foo=bar=baz,"
-        self.assertEqual(
-            detector.detect(),
-            Resource({"k": "v", "k2": "v2", "foo": "bar=baz"}),
-        )
+        with self.assertLogs(level=WARNING):
+            self.assertEqual(
+                detector.detect(),
+                Resource({"k": "v", "k2": "v2", "foo": "bar=baz"}),
+            )
 
     def test_multiple_with_url_decode(self):
         detector = OTELResourceDetector()
-        environ[
-            OTEL_RESOURCE_ATTRIBUTES
-        ] = "key=value%20test%0A, key2=value+%202"
+        environ[OTEL_RESOURCE_ATTRIBUTES] = (
+            "key=value%20test%0A, key2=value+%202"
+        )
         self.assertEqual(
             detector.detect(),
             Resource({"key": "value test\n", "key2": "value+ 2"}),
@@ -519,6 +559,10 @@ class TestOTELResourceDetector(unittest.TestCase):
             Resource({"service.name": "from-service-name"}),
         )
 
+    @patch(
+        "sys.argv",
+        ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"],
+    )
     def test_process_detector(self):
         initial_resource = Resource({"foo": "bar"})
         aggregated_resource = get_aggregated_resources(
@@ -538,8 +582,42 @@ class TestOTELResourceDetector(unittest.TestCase):
             aggregated_resource.attributes.keys(),
         )
 
-    def test_resource_detector_entry_points_default(self):
+        self.assertEqual(
+            aggregated_resource.attributes[PROCESS_PID], os.getpid()
+        )
+        if hasattr(os, "getppid"):
+            self.assertEqual(
+                aggregated_resource.attributes[PROCESS_PARENT_PID],
+                os.getppid(),
+            )
 
+        if psutil is not None:
+            self.assertEqual(
+                aggregated_resource.attributes[PROCESS_OWNER],
+                psutil.Process().username(),
+            )
+
+        self.assertEqual(
+            aggregated_resource.attributes[PROCESS_EXECUTABLE_NAME],
+            sys.executable,
+        )
+        self.assertEqual(
+            aggregated_resource.attributes[PROCESS_EXECUTABLE_PATH],
+            os.path.dirname(sys.executable),
+        )
+        self.assertEqual(
+            aggregated_resource.attributes[PROCESS_COMMAND], sys.argv[0]
+        )
+        self.assertEqual(
+            aggregated_resource.attributes[PROCESS_COMMAND_LINE],
+            " ".join(sys.argv),
+        )
+        self.assertEqual(
+            aggregated_resource.attributes[PROCESS_COMMAND_ARGS],
+            tuple(sys.argv),
+        )
+
+    def test_resource_detector_entry_points_default(self):
         resource = Resource({}).create()
 
         self.assertEqual(
@@ -601,6 +679,24 @@ class TestOTELResourceDetector(unittest.TestCase):
         self.assertEqual(resource.attributes["a"], "b")
         self.assertEqual(resource.schema_url, "")
 
+    @patch.dict(
+        environ, {OTEL_EXPERIMENTAL_RESOURCE_DETECTORS: ""}, clear=True
+    )
+    def test_resource_detector_entry_points_empty(self):
+        resource = Resource({}).create()
+        self.assertEqual(
+            resource.attributes["telemetry.sdk.language"], "python"
+        )
+
+    @patch.dict(
+        environ, {OTEL_EXPERIMENTAL_RESOURCE_DETECTORS: "os"}, clear=True
+    )
+    def test_resource_detector_entry_points_os(self):
+        resource = Resource({}).create()
+
+        self.assertIn(OS_TYPE, resource.attributes)
+        self.assertIn(OS_VERSION, resource.attributes)
+
     def test_resource_detector_entry_points_otel(self):
         """
         Test that OTELResourceDetector-resource-generated attributes are
@@ -639,7 +735,9 @@ class TestOTELResourceDetector(unittest.TestCase):
                 resource.attributes["telemetry.sdk.name"], "opentelemetry"
             )
             self.assertEqual(
-                resource.attributes["service.name"], "unknown_service"
+                resource.attributes["service.name"],
+                "unknown_service:"
+                + resource.attributes["process.executable.name"],
             )
             self.assertEqual(resource.attributes["a"], "b")
             self.assertEqual(resource.attributes["c"], "d")
@@ -649,3 +747,68 @@ class TestOTELResourceDetector(unittest.TestCase):
             )
             self.assertIn(PROCESS_RUNTIME_VERSION, resource.attributes.keys())
             self.assertEqual(resource.schema_url, "")
+
+    @patch("platform.system", lambda: "Linux")
+    @patch("platform.release", lambda: "666.5.0-35-generic")
+    def test_os_detector_linux(self):
+        resource = get_aggregated_resources(
+            [OsResourceDetector()],
+            Resource({}),
+        )
+
+        self.assertEqual(resource.attributes[OS_TYPE], "linux")
+        self.assertEqual(resource.attributes[OS_VERSION], "666.5.0-35-generic")
+
+    @patch("platform.system", lambda: "Windows")
+    @patch("platform.version", lambda: "10.0.666")
+    def test_os_detector_windows(self):
+        resource = get_aggregated_resources(
+            [OsResourceDetector()],
+            Resource({}),
+        )
+
+        self.assertEqual(resource.attributes[OS_TYPE], "windows")
+        self.assertEqual(resource.attributes[OS_VERSION], "10.0.666")
+
+    @patch("platform.system", lambda: "SunOS")
+    @patch("platform.version", lambda: "666.4.0.15.0")
+    def test_os_detector_solaris(self):
+        resource = get_aggregated_resources(
+            [OsResourceDetector()],
+            Resource({}),
+        )
+
+        self.assertEqual(resource.attributes[OS_TYPE], "solaris")
+        self.assertEqual(resource.attributes[OS_VERSION], "666.4.0.15.0")
+
+
+class TestHostResourceDetector(unittest.TestCase):
+    @patch("socket.gethostname", lambda: "foo")
+    @patch("platform.machine", lambda: "AMD64")
+    def test_host_resource_detector(self):
+        resource = get_aggregated_resources(
+            [_HostResourceDetector()],
+            Resource({}),
+        )
+        self.assertEqual(resource.attributes[HOST_NAME], "foo")
+        self.assertEqual(resource.attributes[HOST_ARCH], "AMD64")
+
+    @patch.dict(
+        environ, {OTEL_EXPERIMENTAL_RESOURCE_DETECTORS: "host"}, clear=True
+    )
+    def test_resource_detector_entry_points_host(self):
+        resource = Resource({}).create()
+        self.assertIn(HOST_NAME, resource.attributes)
+        self.assertIn(HOST_ARCH, resource.attributes)
+
+    @patch.dict(
+        environ,
+        {OTEL_EXPERIMENTAL_RESOURCE_DETECTORS: "doesnotexist,host"},
+        clear=True,
+    )
+    def test_resource_detector_entry_points_tolerate_missing_detector(self):
+        resource = Resource({}).create()
+        self.assertEqual(
+            resource.attributes["telemetry.sdk.language"], "python"
+        )
+        self.assertIn(HOST_NAME, resource.attributes)
