@@ -9,6 +9,10 @@ Build-Depends: debhelper-compat (= 13), dh-python, python3-setuptools, python3-a
  python3-opentelemetry-api (>= 1.32.1~),
  python3-opentelemetry-semantic-conventions (<< 0.53b2~),
  python3-opentelemetry-semantic-conventions (>= 0.53b1~),
+ python3-pytest <!nocheck>,
+ python3-opentelemetry-test-utils (<< 0.53b2~) <!nocheck>,
+ python3-opentelemetry-test-utils (>= 0.53b1~) <!nocheck>,
+ python3-flaky <!nocheck>,
 Standards-Version: 4.5.1
 Homepage: https://github.com/open-telemetry/opentelemetry-python/tree/main/opentelemetry-sdk
 Rules-Requires-Root: no
