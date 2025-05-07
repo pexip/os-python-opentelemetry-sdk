@@ -1,1 +1,2 @@
 pex-remove-deprecated.patch
+test-trace-python-interpreter-name.patch

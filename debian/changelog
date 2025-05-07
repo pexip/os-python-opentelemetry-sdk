@@ -3,6 +3,7 @@ python-opentelemetry-sdk (1.32.1-0+pexip25u1) pexip-trixie; urgency=medium
   * New upstream release
   * d/p/pex-remove-deprecated: refresh patch
   * Enable test suite
+  * tests/test_trace/test_shutdown: fix python interpreter name
 
  -- Huw Jones <huw@pexip.com>  Tue, 06 May 2025 16:04:31 +0100
 

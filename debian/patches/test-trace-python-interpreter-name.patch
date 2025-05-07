@@ -1,0 +1,13 @@
+diff --git a/tests/trace/test_trace.py b/tests/trace/test_trace.py
+index 7b23c11..b43c890 100644
+--- a/tests/trace/test_trace.py
++++ b/tests/trace/test_trace.py
+@@ -132,7 +132,7 @@ tracer_provider.add_span_processor(mock_processor)
+                 [
+                     # use shutil to avoid calling python outside the
+                     # virtualenv on windows.
+-                    shutil.which("python"),
++                    shutil.which("python3"),
+                     "-c",
+                     shutdown_python_code.format(
+                         tracer_parameters=tracer_parameters,
