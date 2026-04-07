@@ -1,3 +1,5 @@
+Use python3 as interpreter name in PexOS
+
 diff --git a/tests/trace/test_trace.py b/tests/trace/test_trace.py
 index 7b23c11..b43c890 100644
 --- a/tests/trace/test_trace.py
