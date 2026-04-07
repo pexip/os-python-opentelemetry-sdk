@@ -1,3 +1,5 @@
+Remove use of deprecated module as it is unnecessary
+
 diff --git a/src/opentelemetry/sdk/trace/__init__.py b/src/opentelemetry/sdk/trace/__init__.py
 index 3ac4580..0fe1a46 100644
 --- a/src/opentelemetry/sdk/trace/__init__.py
